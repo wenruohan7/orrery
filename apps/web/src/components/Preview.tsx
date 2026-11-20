@@ -20,7 +20,8 @@ export function Preview({ path, content, compact, onNavigate }: Props) {
   const html = useMemo(() => renderMarkdown(content, renderContext()), [content, index]);
   const props = useMemo(() => {
     const { raw } = splitFrontmatter(content);
-    return raw ? Object.entries(parseFrontmatter(raw)) : [];
+    // Solar designs (orrery-*) are edited from the solar system, not shown here.
+    return raw ? Object.entries(parseFrontmatter(raw)).filter(([k]) => !k.startsWith('orrery-')) : [];
   }, [content]);
 
   useEffect(() => {

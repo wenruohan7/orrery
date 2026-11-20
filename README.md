@@ -6,7 +6,8 @@ A notes app in the spirit of Obsidian, where your notes **orbit each other**.
 - Live editor (CodeMirror) with link and tag autocomplete, plus a reading view with callouts, tasks you can tick, highlights and embeds
 - Attachments: paste, drop or attach images, audio, video and PDFs
 - Daily notes, templates (`{{date}}`, `{{time}}`, `{{title}}`, `{{yesterday}}`, `{{tomorrow}}`), stars, quick switcher and command palette
-- **Solar system**: a 3D view where each top-level folder is a star system. The folder note (or the most linked note) is the sun, notes linked to it are planets, their links are moons, unlinked notes form an asteroid belt, and other links are light beams.
+- **Solar system**: a 3D view where each top-level folder is a galaxy with a gravitationally lensed black hole at its centre (the folder note, or the most linked note). Notes linked to it are stars, their links are planets, links from those are moons, unlinked notes form an asteroid belt, and other links are light beams.
+- **Designs**: change any body's colour, surface (rocky, desert, ocean, ice, lava, gas giant, toxic), rings, size, glow, or a black hole's disk colour, brightness and spin. Designs are saved as `orrery-*` properties in the note. Galaxy themes (Realistic, Neon, Pastel, Monochrome) and tag or folder rules are saved in `orrery.json` in the vault, so they sync too.
 - 2D graph view
 - Self-hosted sync that keeps your vault as plain `.md` files on your Linux machine
 - Import an Obsidian vault folder; export and restore JSON backups

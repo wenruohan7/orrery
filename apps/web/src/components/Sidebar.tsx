@@ -7,7 +7,7 @@ import { useVault } from '../store/vault';
 import { useIndex } from '../store/vaultIndex';
 import { useUI, type LeftTab } from '../store/ui';
 import { fileMenu, folderMenu, newFolder, newNote, openNote, searchFor } from '../lib/actions';
-import { basename, dirname, isNote, noteTitle } from '../lib/paths';
+import { CONFIG_PATH, basename, dirname, isNote, noteTitle } from '../lib/paths';
 import { SyncBadge } from './SyncBadge';
 import { SearchPanel } from './SearchPanel';
 
@@ -101,7 +101,7 @@ function FileTree() {
   const files = useVault((s) => s.files);
   const index = useIndex();
   const tree = useMemo(
-    () => buildTree(Object.values(files).filter((f) => !f.deleted).map((f) => f.path), index.folders),
+    () => buildTree(Object.values(files).filter((f) => !f.deleted && f.path !== CONFIG_PATH).map((f) => f.path), index.folders),
     [files, index.folders],
   );
   if (!tree.children.length) return <p className="muted pad">No notes yet.</p>;

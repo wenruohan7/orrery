@@ -2,14 +2,16 @@ import { useEffect, useMemo, useRef, type ElementRef, type MutableRefObject } fr
 import { useFrame, useThree } from '@react-three/fiber';
 import { Html, OrbitControls } from '@react-three/drei';
 import {
-  AdditiveBlending, BufferAttribute, BufferGeometry, CanvasTexture, Color, DoubleSide, Group, LineLoop, PerspectiveCamera, SRGBColorSpace,
-  Vector3, type Object3D,
+  AdditiveBlending, BufferAttribute, BufferGeometry, CanvasTexture, Color, Group, LineLoop, Matrix3, Matrix4, Mesh,
+  PerspectiveCamera, SRGBColorSpace, ShaderMaterial, Vector3, type Object3D,
 } from 'three';
-import type { Body, SolarLayout } from './layout';
+import { DISK_OUTER, type Body, type SolarLayout } from './layout';
+import { BLACKHOLE_BOUND, blackHoleMaterial, planetMaterial, ringMaterial, starMaterial, surfaceIndex } from './shaders';
+import { THEMES, type ResolvedDesign, type ThemeId } from './design';
 
 export interface Focus {
   path: string | null;
-  system: number | null;
+  galaxy: number | null;
   nonce: number;
 }
 
@@ -23,6 +25,8 @@ export interface SceneOptions {
 
 interface Props {
   layout: SolarLayout;
+  designs: Map<string, ResolvedDesign>;
+  theme: ThemeId;
   selected: string | null;
   hovered: string | null;
   focus: Focus;
@@ -31,6 +35,12 @@ interface Props {
   onSelect(path: string | null): void;
   onHover(path: string | null): void;
 }
+
+export const KIND_NAMES: Record<Body['kind'], string> = {
+  blackhole: 'black hole', star: 'star', planet: 'planet', moon: 'moon', asteroid: 'asteroid',
+};
+
+const WHITE = new Color(1, 1, 1);
 
 // ---------- textures, made once ----------
 
@@ -137,86 +147,159 @@ function Starfield({ radius }: { radius: number }) {
   );
 }
 
-/** Suns use `fixed` labels that keep their screen size, so systems stay readable from afar. */
+/** Black holes use `fixed` labels that keep their screen size, so galaxies stay readable from afar. */
 function Label({ text, height, y, fixed }: { text: string; height: number; y: number; fixed?: boolean }) {
   const { tex, aspect } = labelTexture(text);
   const h = fixed ? 0.032 : height;
   return (
-    <sprite position={[0, y + (fixed ? y * 0.6 : height / 2), 0]} scale={[h * aspect, h, 1]} renderOrder={10}>
+    <sprite position={[0, fixed ? y : y + height / 2, 0]} scale={[h * aspect, h, 1]} renderOrder={10}>
       <spriteMaterial map={tex} transparent depthWrite={false} depthTest={false} sizeAttenuation={!fixed} />
     </sprite>
   );
 }
 
+/** Materials the frame loop updates every frame. */
+interface Live {
+  planets: Map<string, ShaderMaterial>;
+  stars: Map<string, ShaderMaterial>;
+  holes: Map<string, { mesh: Mesh; mat: ShaderMaterial }>;
+}
+
+function HitTarget({ radius, path, onSelect, onHover }: { radius: number; path: string; onSelect(p: string): void; onHover(p: string | null): void }) {
+  return (
+    <mesh
+      onClick={(e) => {
+        e.stopPropagation();
+        onSelect(path);
+      }}
+      onPointerOver={(e) => {
+        e.stopPropagation();
+        onHover(path);
+      }}
+      onPointerOut={() => onHover(null)}
+    >
+      <sphereGeometry args={[radius, 12, 8]} />
+      <meshBasicMaterial transparent opacity={0} depthWrite={false} />
+    </mesh>
+  );
+}
+
 interface BodyProps {
   body: Body;
+  design: ResolvedDesign;
+  theme: ThemeId;
   showLabel: boolean;
+  live: Live;
   register(path: string, obj: Object3D | null): void;
   onSelect(path: string): void;
   onHover(path: string | null): void;
 }
 
-function BodyMesh({ body, showLabel, register, onSelect, onHover }: BodyProps) {
-  const segments = body.kind === 'sun' ? 40 : body.kind === 'planet' ? 28 : 14;
-  const hitRadius = Math.max(body.size * 1.5, body.size + 0.7);
-  const labelHeight = body.kind === 'planet' ? 1.2 : 0.7;
+function BodyMesh({ body, design, theme, showLabel, live, register, onSelect, onHover }: BodyProps) {
+  const size = body.size * design.size;
+  const t = THEMES[theme];
+  const material = useMemo(
+    () => (body.kind === 'blackhole' ? blackHoleMaterial() : body.kind === 'star' ? starMaterial() : planetMaterial()),
+    [body.kind],
+  );
+  const rings = useMemo(() => ringMaterial(), []);
+  const hole = useRef<Mesh>(null);
 
+  useEffect(() => {
+    const u = material.uniforms;
+    if (body.kind === 'blackhole') {
+      u.uDiskColor.value.set(design.disk);
+      u.uBrightness.value = design.brightness * (theme === 'neon' ? 1.3 : 1);
+      u.uSpin.value = design.spin;
+      u.uUnit.value = size;
+      u.uInvTilt.value = new Matrix3().setFromMatrix4(new Matrix4().makeRotationFromQuaternion(body.tilt.clone().invert()));
+    } else if (body.kind === 'star') {
+      u.uColor.value.set(design.color);
+      u.uSeed.value = body.seed;
+    } else {
+      u.uColor.value.set(design.color);
+      u.uSurface.value = surfaceIndex(body.kind === 'asteroid' ? 'rocky' : design.surface);
+      u.uSeed.value = body.seed;
+      u.uRim.value = t.rim;
+      u.uSaturation.value = t.saturation;
+    }
+    rings.uniforms.uColor.value.set(design.color);
+    rings.uniforms.uInner.value = size * 1.35;
+    rings.uniforms.uOuter.value = size * 2.25;
+    rings.uniforms.uSeed.value = body.seed;
+  }, [material, rings, design, body, size, t, theme]);
+
+  useEffect(() => {
+    if (body.kind === 'blackhole') live.holes.set(body.path, { mesh: hole.current!, mat: material });
+    else if (body.kind === 'star') live.stars.set(body.path, material);
+    else live.planets.set(body.path, material);
+    return () => {
+      live.holes.delete(body.path);
+      live.stars.delete(body.path);
+      live.planets.delete(body.path);
+    };
+  }, [body, material, live]);
+
+  useEffect(
+    () => () => {
+      material.dispose();
+      rings.dispose();
+    },
+    [material, rings],
+  );
+
+  if (body.kind === 'blackhole') {
+    return (
+      <group ref={(g) => register(body.path, g)}>
+        {/* Billboard quad; the frame loop turns it to the camera and sizes it to cover the lensing. */}
+        <mesh ref={hole} material={material} renderOrder={5} frustumCulled={false}>
+          <planeGeometry args={[2, 2]} />
+        </mesh>
+        <HitTarget radius={size * 4} path={body.path} onSelect={onSelect} onHover={onHover} />
+        {showLabel && <Label text={body.title} height={0} y={size * DISK_OUTER * 0.8} fixed />}
+      </group>
+    );
+  }
+
+  const segments = body.kind === 'star' ? 48 : body.kind === 'planet' ? 40 : 20;
   return (
     <group ref={(g) => register(body.path, g)}>
-      <mesh>
-        <sphereGeometry args={[body.size, segments, Math.ceil(segments / 2)]} />
-        {body.kind === 'sun' ? (
-          <meshBasicMaterial color={body.color} />
-        ) : (
-          <meshStandardMaterial color={body.color} emissive={body.color} emissiveIntensity={0.22} roughness={0.9} metalness={0} />
-        )}
+      <mesh material={material}>
+        <sphereGeometry args={[size, segments, Math.ceil(segments / 2)]} />
       </mesh>
-      {/* Larger invisible sphere so small bodies are easy to tap. */}
-      <mesh
-        onClick={(e) => {
-          e.stopPropagation();
-          onSelect(body.path);
-        }}
-        onPointerOver={(e) => {
-          e.stopPropagation();
-          onHover(body.path);
-        }}
-        onPointerOut={() => onHover(null)}
-      >
-        <sphereGeometry args={[hitRadius, 12, 8]} />
-        <meshBasicMaterial transparent opacity={0} depthWrite={false} />
-      </mesh>
-      {body.kind === 'sun' && (
+      <HitTarget radius={Math.max(size * 1.5, size + 0.7)} path={body.path} onSelect={onSelect} onHover={onHover} />
+      {body.kind === 'star' && design.glow > 0 && (
         <>
-          <sprite scale={[body.size * 7, body.size * 7, 1]}>
-            <spriteMaterial map={glowTexture} color={body.color} blending={AdditiveBlending} transparent depthWrite={false} />
+          <sprite scale={[size * 6 * design.glow, size * 6 * design.glow, 1]}>
+            <spriteMaterial map={glowTexture} color={design.color} blending={AdditiveBlending} transparent depthWrite={false} />
           </sprite>
-          <sprite scale={[body.size * 16, body.size * 16, 1]}>
-            <spriteMaterial map={glowTexture} color={body.color} blending={AdditiveBlending} transparent opacity={0.25} depthWrite={false} />
+          <sprite scale={[size * 14 * design.glow, size * 14 * design.glow, 1]}>
+            <spriteMaterial map={glowTexture} color={design.color} blending={AdditiveBlending} transparent opacity={0.22} depthWrite={false} />
           </sprite>
         </>
       )}
-      {body.kind === 'planet' && body.moons >= 4 && (
-        <mesh rotation={[-Math.PI / 2.4, 0.3, 0]}>
-          <ringGeometry args={[body.size * 1.35, body.size * 1.9, 48]} />
-          <meshBasicMaterial color={body.color} side={DoubleSide} transparent opacity={0.3} depthWrite={false} />
+      {body.kind === 'planet' && design.rings && (
+        <mesh rotation={[-Math.PI / 2.3, 0.25, 0]} material={rings}>
+          <ringGeometry args={[size * 1.35, size * 2.25, 96]} />
         </mesh>
       )}
-      {showLabel && <Label text={body.title} height={labelHeight} y={body.size + 0.25} fixed={body.kind === 'sun'} />}
+      {showLabel && <Label text={body.title} height={body.kind === 'star' ? 1.5 : 0.9} y={size + 0.3} />}
     </group>
   );
 }
 
 // ---------- scene ----------
 
-export function Scene({ layout, selected, hovered, focus, options, time, onSelect, onHover }: Props) {
+export function Scene({ layout, designs, theme, selected, hovered, focus, options, time, onSelect, onHover }: Props) {
   const objects = useRef(new Map<string, Object3D>());
   const rings = useRef(new Map<string, LineLoop>());
+  const live = useMemo<Live>(() => ({ planets: new Map(), stars: new Map(), holes: new Map() }), []);
   const positions = useMemo(() => new Map(layout.bodies.map((b) => [b.path, new Vector3()])), [layout]);
   const marker = useRef<Group>(null);
   const hoverAnchor = useRef<Group>(null);
   const controls = useRef<ElementRef<typeof OrbitControls>>(null);
   const { camera, size } = useThree();
+  const beamLevel = THEMES[theme].beam;
 
   // Keep the selected body in the part of the screen the note card doesn't cover.
   useEffect(() => {
@@ -249,12 +332,12 @@ export function Scene({ layout, selected, hovered, focus, options, time, onSelec
     layout.beams.forEach(([a, b], i) => {
       const lit = selected === a || selected === b;
       for (const [k, p] of [[0, a], [1, b]] as const) {
-        c.set(layout.byPath.get(p)!.color).multiplyScalar(lit ? 1.4 : selected ? 0.18 : 0.45);
+        c.set(designs.get(p)?.color ?? '#ffffff').multiplyScalar(lit ? 1.4 : selected ? beamLevel * 0.4 : beamLevel);
         colors.setXYZ(i * 2 + k, c.r, c.g, c.b);
       }
     });
     colors.needsUpdate = true;
-  }, [beamGeometry, layout, selected]);
+  }, [beamGeometry, layout, selected, designs, beamLevel]);
 
   // ----- camera flights -----
   const flight = useRef({ active: false, elapsed: 0, last: new Vector3(), following: false, dist: 30 });
@@ -263,12 +346,17 @@ export function Scene({ layout, selected, hovered, focus, options, time, onSelec
     f.active = true;
     f.elapsed = 0;
     f.following = false;
-    if (focus.path) {
-      const body = layout.byPath.get(focus.path);
-      f.dist = body ? (body.kind === 'sun' ? body.size * 9 : body.size * 9 + 6) : 30;
-    } else if (focus.system != null) {
-      f.dist = layout.systems[focus.system].extent * 1.6 + 10;
+    const body = focus.path ? layout.byPath.get(focus.path) : null;
+    if (body) {
+      const s = body.size * (designs.get(body.path)?.size ?? 1);
+      f.dist = body.kind === 'blackhole' ? s * DISK_OUTER * 2.6 : body.kind === 'star' ? s * 9 + 8 : body.kind === 'planet' ? s * 9 + 5 : s * 12 + 3;
+    } else if (focus.galaxy != null) {
+      f.dist = layout.galaxies[focus.galaxy].extent * 1.5 + 10;
     } else f.dist = layout.radius * 1.05 + 15;
+    // Portrait phones see much less sideways; back off so the body still fits.
+    const aspect = size.width / size.height;
+    if (aspect < 1) f.dist *= Math.min(2.2, 0.8 / aspect);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focus, layout]);
 
   useEffect(() => {
@@ -278,14 +366,17 @@ export function Scene({ layout, selected, hovered, focus, options, time, onSelec
     return () => c?.removeEventListener('start', stop);
   }, []);
 
-  const target = new Vector3();
-  const dir = new Vector3();
-  const delta = new Vector3();
+  const scratch = useMemo(
+    () => ({ target: new Vector3(), dir: new Vector3(), delta: new Vector3(), up: new Vector3(0, 0.55, 0.85).normalize() }),
+    [],
+  );
 
-  useFrame((_, rawDt) => {
+  useFrame((state, rawDt) => {
     const dt = Math.min(rawDt, 0.1);
     if (!options.paused) time.current += dt * options.speed;
     const t = time.current;
+    const clock = state.clock.elapsedTime;
+    const { target, dir, delta } = scratch;
 
     for (const body of layout.bodies) {
       const pos = positions.get(body.path)!;
@@ -293,10 +384,31 @@ export function Scene({ layout, selected, hovered, focus, options, time, onSelec
         pos.copy(positions.get(body.parent)!);
         const a = body.phase + t * body.speed;
         pos.add(dir.set(Math.cos(a) * body.orbit, 0, Math.sin(a) * body.orbit).applyQuaternion(body.tilt));
-      } else pos.copy(layout.systems[body.system].center);
+      } else pos.copy(layout.galaxies[body.galaxy].center);
       objects.current.get(body.path)?.position.copy(pos);
       const ring = rings.current.get(body.path);
       if (ring && body.parent) ring.position.copy(positions.get(body.parent)!);
+    }
+
+    for (const [path, mat] of live.planets) {
+      const body = layout.byPath.get(path);
+      if (!body?.light) continue;
+      mat.uniforms.uLightPos.value.copy(positions.get(body.light)!);
+      const source = layout.byPath.get(body.light)!;
+      const d = designs.get(body.light);
+      mat.uniforms.uLightColor.value.set((source.kind === 'blackhole' ? d?.disk : d?.color) ?? '#ffffff').lerp(WHITE, 0.55);
+      mat.uniforms.uTime.value = clock;
+    }
+    for (const mat of live.stars.values()) mat.uniforms.uTime.value = clock;
+    for (const [path, { mesh, mat }] of live.holes) {
+      const center = positions.get(path)!;
+      const R = BLACKHOLE_BOUND * (mat.uniforms.uUnit.value as number);
+      const d = camera.position.distanceTo(center);
+      const half = d > R * 1.05 ? (R * d) / Math.sqrt(d * d - R * R) : R * 40;
+      mesh.quaternion.copy(camera.quaternion);
+      mesh.scale.setScalar(half * 1.15);
+      mat.uniforms.uCenter.value.copy(center);
+      mat.uniforms.uTime.value = clock;
     }
 
     if (options.beams && layout.beams.length) {
@@ -313,11 +425,13 @@ export function Scene({ layout, selected, hovered, focus, options, time, onSelec
 
     if (marker.current) {
       const sel = selected ? positions.get(selected) : null;
-      marker.current.visible = !!sel;
+      // Black holes already have a photon ring; a marker on top just muddies it.
+      marker.current.visible = !!sel && layout.byPath.get(selected!)!.kind !== 'blackhole';
       if (sel) {
+        const body = layout.byPath.get(selected!)!;
+        const s = body.size * (designs.get(selected!)?.size ?? 1) * (body.kind === 'blackhole' ? 7 : 3.2);
         marker.current.position.copy(sel);
-        const s = layout.byPath.get(selected!)!.size * 3.2 * (1 + Math.sin(performance.now() / 300) * 0.04);
-        marker.current.scale.setScalar(s);
+        marker.current.scale.setScalar(s * (1 + Math.sin(performance.now() / 300) * 0.04));
       }
     }
     if (hoverAnchor.current && hovered) {
@@ -339,8 +453,8 @@ export function Scene({ layout, selected, hovered, focus, options, time, onSelec
       f.last.copy(p);
       f.following = true;
       target.copy(p);
-    } else if (focus.system != null) {
-      target.copy(layout.systems[focus.system].center);
+    } else if (focus.galaxy != null) {
+      target.copy(layout.galaxies[focus.galaxy].center);
     } else target.set(0, 0, 0);
 
     if (f.active) {
@@ -350,7 +464,7 @@ export function Scene({ layout, selected, hovered, focus, options, time, onSelec
       dir.subVectors(camera.position, c.target);
       if (dir.lengthSq() < 1e-6) dir.set(0, 0.4, 1);
       dir.normalize();
-      if (focus.path == null) dir.lerp(new Vector3(0, 0.55, 0.85).normalize(), k).normalize();
+      if (focus.path == null) dir.lerp(scratch.up, k).normalize();
       camera.position.lerp(delta.copy(target).addScaledVector(dir, f.dist), k);
       if (f.elapsed > 2.6) f.active = false;
     }
@@ -362,10 +476,6 @@ export function Scene({ layout, selected, hovered, focus, options, time, onSelec
   return (
     <>
       <color attach="background" args={['#03040a']} />
-      <ambientLight intensity={0.22} />
-      {layout.systems.slice(0, 8).map((s) => (
-        <pointLight key={s.id} position={s.center} intensity={1.15} decay={0} distance={s.extent * 2.5 + 20} />
-      ))}
       <Starfield radius={layout.radius * 6 + 1500} />
       <OrbitControls
         ref={controls}
@@ -381,7 +491,10 @@ export function Scene({ layout, selected, hovered, focus, options, time, onSelec
         <BodyMesh
           key={b.path}
           body={b}
-          showLabel={options.labels ? b.kind !== 'moon' && b.kind !== 'asteroid' : b.kind === 'sun'}
+          design={designs.get(b.path)!}
+          theme={theme}
+          showLabel={b.kind === 'blackhole' || (options.labels && (b.kind === 'star' || b.kind === 'planet'))}
+          live={live}
           register={register}
           onSelect={onSelect}
           onHover={onHover}
@@ -390,7 +503,7 @@ export function Scene({ layout, selected, hovered, focus, options, time, onSelec
 
       {options.orbits &&
         layout.bodies
-          .filter((b) => b.kind === 'planet' || b.kind === 'moon')
+          .filter((b) => b.kind === 'star' || b.kind === 'planet' || b.kind === 'moon')
           .map((b) => (
             <lineLoop
               key={b.path}
@@ -401,12 +514,11 @@ export function Scene({ layout, selected, hovered, focus, options, time, onSelec
               geometry={circle}
               scale={b.orbit}
               quaternion={b.tilt}
-              position={b.kind === 'planet' ? layout.systems[b.system].center : undefined}
             >
               <lineBasicMaterial
-                color={b.kind === 'planet' ? '#8b84c9' : '#6c6890'}
+                color={b.kind === 'star' ? '#a39bd8' : b.kind === 'planet' ? '#8b84c9' : '#6c6890'}
                 transparent
-                opacity={selected === b.path ? 0.6 : b.kind === 'planet' ? 0.16 : 0.1}
+                opacity={selected === b.path ? 0.6 : b.kind === 'star' ? 0.14 : b.kind === 'planet' ? 0.12 : 0.08}
                 depthWrite={false}
               />
             </lineLoop>
@@ -429,7 +541,7 @@ export function Scene({ layout, selected, hovered, focus, options, time, onSelec
           <Html center style={{ pointerEvents: 'none' }} position={[0, hoveredBody.size + 1.2, 0]} zIndexRange={[20, 0]}>
             <div className="solar-tooltip">
               <strong>{hoveredBody.title}</strong>
-              <span>{hoveredBody.kind}</span>
+              <span>{KIND_NAMES[hoveredBody.kind]}</span>
             </div>
           </Html>
         )}
@@ -437,4 +549,3 @@ export function Scene({ layout, selected, hovered, focus, options, time, onSelec
     </>
   );
 }
-

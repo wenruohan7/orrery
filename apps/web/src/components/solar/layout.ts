@@ -3,37 +3,41 @@ import type { VaultIndex, NoteInfo } from '../../store/vaultIndex';
 import { seeded } from '../../lib/hash';
 import { topFolder } from '../../lib/paths';
 
-export type BodyKind = 'sun' | 'planet' | 'moon' | 'asteroid';
+export type BodyKind = 'blackhole' | 'star' | 'planet' | 'moon' | 'asteroid';
 
 export interface Body {
   path: string;
   title: string;
   kind: BodyKind;
-  system: number;
-  /** Body this one orbits; null for suns (they sit at the system centre). */
+  galaxy: number;
+  /** Body this one orbits; null for black holes (they sit at the galaxy centre). */
   parent: string | null;
+  /** Star (or black hole, for rogue planets) that lights this body. */
+  light: string | null;
   orbit: number;
   phase: number;
   /** Radians per simulated second. */
   speed: number;
   tilt: Quaternion;
+  /** Radius; for black holes the event horizon. */
   size: number;
-  color: string;
   degree: number;
-  moons: number;
+  /** Bodies orbiting this one. */
+  satellites: number;
+  /** 0..1, stable per note; drives default looks. */
+  seed: number;
 }
 
-export interface StarSystem {
+export interface Galaxy {
   id: number;
   name: string;
   center: Vector3;
   extent: number;
-  sun: string;
-  color: string;
+  core: string;
 }
 
 export interface SolarLayout {
-  systems: StarSystem[];
+  galaxies: Galaxy[];
   bodies: Body[];
   byPath: Map<string, Body>;
   /** Links between bodies that don't already orbit each other. */
@@ -41,13 +45,12 @@ export interface SolarLayout {
   radius: number;
 }
 
-const STAR_COLORS = ['#ffcf6e', '#8ec5ff', '#ff9a6b', '#fff0c2', '#c6a3ff', '#7dffd6', '#ff7fb3', '#ffe08a'];
+/** Accretion disk edges, in event-horizon radii. Shared with the black hole shader. */
+export const DISK_INNER = 2.6;
+export const DISK_OUTER = 7.5;
+
 const GOLDEN = Math.PI * (3 - Math.sqrt(5));
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
-
-function hueOf(s: string) {
-  return Math.floor(seeded(s) * 360);
-}
 
 function tiltFor(key: string, amount: number) {
   return new Quaternion().setFromEuler(new Euler((seeded(key + 'x') - 0.5) * amount, 0, (seeded(key + 'z') - 0.5) * amount, 'ZYX'));
@@ -70,6 +73,8 @@ export function computeLayout(index: VaultIndex): SolarLayout {
     }
   }
   const degree = (p: string) => adjacency.get(p)?.size ?? 0;
+  const words = (p: string) => index.byPath.get(p)?.parsed.words ?? 0;
+  const title = (p: string) => index.byPath.get(p)!.title;
 
   const groups = new Map<string, NoteInfo[]>();
   for (const n of index.notes) {
@@ -80,126 +85,157 @@ export function computeLayout(index: VaultIndex): SolarLayout {
   const keys = [...groups.keys()].sort((a, b) => (a === '' ? -1 : b === '' ? 1 : a.localeCompare(b)));
 
   const bodies: Body[] = [];
-  const systems: StarSystem[] = [];
+  const galaxies: Galaxy[] = [];
 
-  keys.forEach((key, sysId) => {
+  keys.forEach((key, gid) => {
     const notes = groups.get(key)!;
-    const inSystem = new Set(notes.map((n) => n.path));
-    const local = (p: string) => [...(adjacency.get(p) ?? [])].filter((q) => inSystem.has(q));
-    const words = (p: string) => index.byPath.get(p)?.parsed.words ?? 0;
+    const inGalaxy = new Set(notes.map((n) => n.path));
+    const local = (p: string) => [...(adjacency.get(p) ?? [])].filter((q) => inGalaxy.has(q));
     const rank = (a: string, b: string) => local(b).length - local(a).length || degree(b) - degree(a) || words(b) - words(a) || a.localeCompare(b);
 
-    // The sun is the folder note when there is one, otherwise the most linked note.
+    // The black hole is the folder note when there is one, otherwise the most linked note.
     const folderNote = key ? notes.find((n) => n.path === `${key}/${key}.md`) : notes.find((n) => /^(welcome|home|index|readme)\.md$/i.test(n.path));
-    const sun = folderNote?.path ?? notes.map((n) => n.path).sort(rank)[0];
-    const color = STAR_COLORS[sysId % STAR_COLORS.length];
-    const sysHue = hueOf(key || 'home');
+    const core = folderNote?.path ?? notes.map((n) => n.path).sort(rank)[0];
 
-    const assigned = new Set([sun]);
-    const planets: string[] = [];
+    const assigned = new Set([core]);
+    const stars: string[] = [];
+    const planetsOf = new Map<string, string[]>();
     const moonsOf = new Map<string, string[]>();
+    const push = (map: Map<string, string[]>, k: string, v: string) => {
+      if (!map.has(k)) map.set(k, []);
+      map.get(k)!.push(v);
+    };
 
-    /** Breadth-first from `root`; direct neighbours become planets (or moons), deeper ones moons of their branch. */
-    const claim = (root: string, rootIsSun: boolean) => {
-      const owner = new Map<string, string>();
-      const queue: string[] = [root];
+    /**
+     * Breadth-first from `root`. Depth decides the role: for the black hole, depth 1 = star,
+     * 2 = planet, 3+ = moon; for a stray cluster's star, depth 1 = planet, 2+ = moon.
+     */
+    const claim = (root: string, rootDepth: number) => {
+      const depth = new Map([[root, rootDepth]]);
+      const planetOf = new Map<string, string>();
+      const queue = [root];
       while (queue.length) {
         const cur = queue.shift()!;
         for (const next of local(cur).sort(rank)) {
           if (assigned.has(next)) continue;
           assigned.add(next);
           queue.push(next);
-          if (rootIsSun && cur === root) {
-            planets.push(next);
-            owner.set(next, next);
+          const d = depth.get(cur)! + 1;
+          depth.set(next, d);
+          if (d === 1) stars.push(next);
+          else if (d === 2) {
+            push(planetsOf, cur, next);
+            planetOf.set(next, next);
           } else {
-            const o = rootIsSun ? owner.get(cur)! : root;
-            owner.set(next, o);
-            if (!moonsOf.has(o)) moonsOf.set(o, []);
-            moonsOf.get(o)!.push(next);
+            const planet = planetOf.get(cur)!;
+            planetOf.set(next, planet);
+            push(moonsOf, planet, next);
           }
         }
       }
     };
-    claim(sun, true);
+    claim(core, 0);
 
-    // Clusters not connected to the sun orbit as planets with their own moons.
-    const rest = notes.map((n) => n.path).filter((p) => !assigned.has(p)).sort(rank);
+    // Clusters not connected to the black hole become stars with their own planets.
     const loose: string[] = [];
-    for (const p of rest) {
+    for (const p of notes.map((n) => n.path).filter((x) => !assigned.has(x)).sort(rank)) {
       if (assigned.has(p)) continue;
       if (local(p).some((q) => !assigned.has(q))) {
         assigned.add(p);
-        planets.push(p);
-        claim(p, false);
+        stars.push(p);
+        claim(p, 1);
       } else loose.push(p);
     }
-    // A handful of unlinked notes stay clickable as small planets; many become an asteroid belt.
+    // A few unlinked notes drift as rogue planets around the black hole; many become an asteroid belt.
     const asteroids = loose.length > 8 ? loose : [];
-    if (!asteroids.length) planets.push(...loose);
+    const rogues = asteroids.length ? [] : loose;
 
-    const sunSize = clamp(2.4 + 0.35 * Math.sqrt(degree(sun)) + 0.25 * Math.log10(1 + words(sun)), 2.4, 5.5);
-    const sysBodies: Body[] = [];
-    sysBodies.push({
-      path: sun, title: index.byPath.get(sun)!.title, kind: 'sun', system: sysId, parent: null, orbit: 0, phase: 0, speed: 0,
-      tilt: new Quaternion(), size: sunSize, color, degree: degree(sun), moons: planets.length,
+    const horizon = clamp(1.1 + 0.14 * Math.sqrt(degree(core)), 1.1, 2.2);
+    const out: Body[] = [];
+    out.push({
+      path: core, title: title(core), kind: 'blackhole', galaxy: gid, parent: null, light: null, orbit: 0, phase: 0, speed: 0,
+      tilt: tiltFor(core, 0.35), size: horizon, degree: degree(core), satellites: stars.length + rogues.length, seed: seeded(core),
     });
 
-    let r = sunSize * 2.2 + 5;
-    planets.forEach((p, i) => {
-      const deg = degree(p);
-      const size = clamp(0.65 + 0.22 * Math.sqrt(deg) + 0.14 * Math.log10(1 + words(p)), 0.65, 2.3);
-      const moons = moonsOf.get(p) ?? [];
-      let mr = size * 1.7 + 0.9;
-      const moonBodies = moons.map((m, j) => {
-        const msize = clamp(0.28 + 0.07 * Math.sqrt(degree(m)) + 0.05 * Math.log10(1 + words(m)), 0.28, 0.7);
+    /** Lay out a planet and its moons; returns the planet body, its moons and how far they reach. */
+    const planetSystem = (p: string, parent: string, light: string) => {
+      const size = clamp(0.5 + 0.17 * Math.sqrt(degree(p)) + 0.1 * Math.log10(1 + words(p)), 0.5, 1.5);
+      let mr = size * 1.9 + 0.6;
+      const moons = (moonsOf.get(p) ?? []).map((m, j) => {
+        const msize = clamp(0.2 + 0.06 * Math.sqrt(degree(m)) + 0.04 * Math.log10(1 + words(m)), 0.2, 0.45);
         const orbit = mr + msize;
-        mr = orbit + msize + 0.55;
-        const tag = index.byPath.get(m)?.parsed.tags[0];
+        mr = orbit + msize + 0.5;
         return {
-          path: m, title: index.byPath.get(m)!.title, kind: 'moon' as const, system: sysId, parent: p, orbit,
-          phase: seeded(m) * Math.PI * 2 + j, speed: orbitalSpeed(orbit, 2.2), tilt: tiltFor(m, 0.9), size: msize,
-          color: tag ? `hsl(${hueOf(tag)}, 35%, 72%)` : `hsl(${sysHue}, 14%, 70%)`, degree: degree(m), moons: 0,
+          path: m, title: title(m), kind: 'moon' as const, galaxy: gid, parent: p, light, orbit,
+          phase: seeded(m) * Math.PI * 2 + j, speed: orbitalSpeed(orbit, 2), tilt: tiltFor(m, 0.8), size: msize,
+          degree: degree(m), satellites: 0, seed: seeded(m),
         };
       });
-      const extent = Math.max(size * 1.4, mr);
-      r += extent;
-      const tag = index.byPath.get(p)?.parsed.tags[0];
-      const hue = tag ? hueOf(tag) : (sysHue + (seeded(p) - 0.5) * 80 + 360) % 360;
-      sysBodies.push({
-        path: p, title: index.byPath.get(p)!.title, kind: 'planet', system: sysId, parent: sun, orbit: r,
-        phase: seeded(p) * Math.PI * 2 + i * GOLDEN, speed: orbitalSpeed(r, 9), tilt: tiltFor(p, 0.22), size,
-        color: `hsl(${Math.round(hue)}, 62%, 60%)`, degree: deg, moons: moons.length,
+      const planet: Body = {
+        path: p, title: title(p), kind: 'planet', galaxy: gid, parent, light, orbit: 0, phase: seeded(p) * Math.PI * 2,
+        speed: 0, tilt: tiltFor(p, 0.25), size, degree: degree(p), satellites: moons.length, seed: seeded(p),
+      };
+      return { planet, moons, extent: Math.max(size * 2.2, mr) };
+    };
+
+    let r = horizon * DISK_OUTER * 1.25 + 6;
+    stars.forEach((s, i) => {
+      const size = clamp(1.1 + 0.2 * Math.sqrt(degree(s)) + 0.12 * Math.log10(1 + words(s)), 1.1, 2.6);
+      let pr = size * 2.6 + 2;
+      const inner: Body[] = [];
+      (planetsOf.get(s) ?? []).forEach((p, j) => {
+        const sys = planetSystem(p, s, s);
+        pr += sys.extent;
+        sys.planet.orbit = pr;
+        sys.planet.speed = orbitalSpeed(pr, 6);
+        sys.planet.phase += j * GOLDEN;
+        inner.push(sys.planet, ...sys.moons);
+        pr += sys.extent + 1.6;
       });
-      sysBodies.push(...moonBodies);
-      r += extent + 2.5;
+      const extent = Math.max(size * 2, pr);
+      r += extent;
+      out.push({
+        path: s, title: title(s), kind: 'star', galaxy: gid, parent: core, light: null, orbit: r,
+        phase: seeded(s) * Math.PI * 2 + i * GOLDEN, speed: orbitalSpeed(r, 14), tilt: tiltFor(s, 0.3), size,
+        degree: degree(s), satellites: inner.filter((b) => b.parent === s).length, seed: seeded(s),
+      });
+      out.push(...inner);
+      r += extent + 5;
+    });
+
+    rogues.forEach((p) => {
+      const sys = planetSystem(p, core, core);
+      r += sys.extent;
+      sys.planet.orbit = r;
+      sys.planet.speed = orbitalSpeed(r, 14);
+      out.push(sys.planet, ...sys.moons);
+      r += sys.extent + 3;
     });
 
     const belt = r + 2;
     asteroids.forEach((a) => {
-      const orbit = belt + seeded(a + 'r') * 5;
-      sysBodies.push({
-        path: a, title: index.byPath.get(a)!.title, kind: 'asteroid', system: sysId, parent: sun, orbit,
-        phase: seeded(a) * Math.PI * 2, speed: orbitalSpeed(orbit, 9), tilt: tiltFor(a, 0.18),
-        size: 0.22 + seeded(a + 's') * 0.18, color: '#9a95a8', degree: 0, moons: 0,
+      const orbit = belt + seeded(a + 'r') * 6;
+      out.push({
+        path: a, title: title(a), kind: 'asteroid', galaxy: gid, parent: core, light: core, orbit,
+        phase: seeded(a) * Math.PI * 2, speed: orbitalSpeed(orbit, 14), tilt: tiltFor(a, 0.18),
+        size: 0.22 + seeded(a + 's') * 0.18, degree: 0, satellites: 0, seed: seeded(a),
       });
     });
-    const extent = asteroids.length ? belt + 6 : r;
 
-    bodies.push(...sysBodies);
-    systems.push({ id: sysId, name: key || 'Home', center: new Vector3(), extent, sun, color });
+    bodies.push(...out);
+    galaxies.push({ id: gid, name: key || 'Home', center: new Vector3(), extent: asteroids.length ? belt + 8 : r, core });
   });
 
-  // Spread systems on a golden-angle spiral, spaced by the largest system.
-  const maxExtent = Math.max(10, ...systems.map((s) => s.extent));
+  // Spread galaxies on a golden-angle spiral, spaced by the largest one.
+  const maxExtent = Math.max(10, ...galaxies.map((g) => g.extent));
   const spacing = (maxExtent * 2 + 30) / 0.8;
-  systems.forEach((s, i) => {
+  galaxies.forEach((g, i) => {
     if (i === 0) return;
     const angle = i * GOLDEN * 2.4;
     const dist = spacing * Math.sqrt(i);
-    s.center.set(Math.cos(angle) * dist, (seeded(s.name) - 0.5) * maxExtent * 0.5, Math.sin(angle) * dist);
+    g.center.set(Math.cos(angle) * dist, (seeded(g.name) - 0.5) * maxExtent * 0.5, Math.sin(angle) * dist);
   });
-  const radius = Math.max(...systems.map((s) => s.center.length() + s.extent), 20);
+  const radius = Math.max(...galaxies.map((g) => g.center.length() + g.extent), 20);
 
   const byPath = new Map(bodies.map((b) => [b.path, b]));
   const beams: [string, string][] = [];
@@ -215,16 +251,5 @@ export function computeLayout(index: VaultIndex): SolarLayout {
       beams.push([a, b]);
     }
   }
-  return { systems, bodies, byPath, beams, radius };
-}
-
-const tmp = new Vector3();
-
-/** World position of a body at simulated time `t`. */
-export function bodyPosition(layout: SolarLayout, body: Body, t: number, out: Vector3): Vector3 {
-  if (!body.parent) return out.copy(layout.systems[body.system].center);
-  bodyPosition(layout, layout.byPath.get(body.parent)!, t, out);
-  const a = body.phase + t * body.speed;
-  tmp.set(Math.cos(a) * body.orbit, 0, Math.sin(a) * body.orbit).applyQuaternion(body.tilt);
-  return out.add(tmp);
+  return { galaxies, bodies, byPath, beams, radius };
 }

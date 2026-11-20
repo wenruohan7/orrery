@@ -46,4 +46,7 @@ export function uniquePath(path: string, exists: (p: string) => boolean) {
   }
 }
 
+/** Vault-wide solar system settings; synced, but hidden from the file list. */
+export const CONFIG_PATH = 'orrery.json';
+
 export const topFolder = (p: string) => (p.includes('/') ? p.slice(0, p.indexOf('/')) : '');

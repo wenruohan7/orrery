@@ -35,6 +35,8 @@ interface VaultState {
   createNote(path: string, content?: string, open?: boolean): string;
   saveNote(path: string, content: string): void;
   saveAttachment(name: string, blob: Blob): Promise<string>;
+  /** Create or replace a non-note file at an exact path. */
+  saveFile(path: string, blob: Blob): Promise<void>;
   rename(oldPath: string, newPath: string): string | null;
   renameFolder(oldFolder: string, newFolder: string): void;
   remove(path: string): void;
@@ -168,6 +170,10 @@ export const useVault = create<VaultState>((set, get) => {
       const path = uniquePath(joinPath(get().settings.attachmentFolder, normalizePath(basename(name)) || 'file'), exists);
       putNew(path, { kind: 'binary', content: '', blob, hash: await hashBlob(blob), mtime: Date.now() });
       return path;
+    },
+
+    async saveFile(path, blob) {
+      putNew(path, { kind: 'binary', content: '', blob, hash: await hashBlob(blob), mtime: Date.now() });
     },
 
     rename(oldPath, newPath) {

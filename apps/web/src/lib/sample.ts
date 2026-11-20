@@ -15,8 +15,8 @@ Orrery is a notes app where your notes **orbit each other**. Every note is a pla
 - Today's daily note: [[${today}]]
 
 > [!tip] How the solar system works
-> Each top-level folder is a star system. Its most linked note becomes the **sun**,
-> the notes it links to are **planets**, and their links become **moons**.
+> Each top-level folder is a galaxy with a **black hole** at its heart (its most linked note).
+> Notes linked to it are **stars**, their links are **planets**, and links from those are **moons**.
 
 #start-here`,
     'Inbox.md': `# Inbox
@@ -34,7 +34,7 @@ Related: [[Ideas]]`,
 
     'Guides/Guides.md': `# Guides
 
-This folder note is the sun of the Guides system, because it has the folder's name.
+This folder note is the black hole at the centre of the Guides galaxy, because it has the folder's name.
 
 - [[Linking notes]]
 - [[Markdown cheatsheet]]
@@ -85,14 +85,15 @@ Back to [[Guides]] · #guide`,
 
 The solar system shows your whole vault in 3D.
 
-- **Star systems** are your top-level folders. Notes outside folders live in the *Home* system.
-- The **sun** is the folder note (a note named like its folder) or the most linked note.
-- **Planets** are notes linked to the sun, or the centres of other groups of linked notes.
-- **Moons** are notes linked to a planet.
+- **Galaxies** are your top-level folders. Notes outside folders live in the *Home* galaxy.
+- The **black hole** is the folder note (a note named like its folder) or the most linked note.
+- **Stars** are notes linked to the black hole, or the centres of other groups of linked notes.
+- **Planets** are notes linked to a star, and **moons** are notes linked to a planet.
 - **Asteroids** are notes with no links yet.
 - **Light beams** are links between bodies that don't orbit each other.
 
-Tap a body to see its note. Use **Add moon** to make a new note that orbits it.
+Tap a body to see its note, or open its **Design** tab to change its colour, surface, rings and size.
+The palette button changes the whole galaxy's theme and lets you style notes by tag or folder.
 Related: [[Linking notes]], [[Graph view]]`,
     'Guides/Graph view.md': `# Graph view
 

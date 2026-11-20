@@ -113,6 +113,21 @@ export function parseNote(content: string): ParsedNote {
   return { links, tags: [...tags], headings, frontmatter, words, tasks: { done, total } };
 }
 
+/** Set, replace or (with null) remove top-level properties, keeping everything else as written. */
+export function setProperties(content: string, patch: Record<string, string | null>) {
+  const m = FRONTMATTER.exec(content);
+  const lines = m ? m[1].split(/\r?\n/) : [];
+  for (const [key, value] of Object.entries(patch)) {
+    const at = lines.findIndex((l) => l.startsWith(key + ':'));
+    if (value == null) {
+      if (at >= 0) lines.splice(at, 1);
+    } else if (at >= 0) lines[at] = `${key}: ${value}`;
+    else lines.push(`${key}: ${value}`);
+  }
+  const body = m ? content.slice(m[0].length) : content;
+  return lines.some((l) => l.trim()) ? `---\n${lines.join('\n')}\n---\n${body}` : body;
+}
+
 /** Flip the n-th task checkbox (0-based, in document order, skipping code). */
 export function toggleTask(content: string, n: number) {
   const masked = maskCode(content).split('\n');

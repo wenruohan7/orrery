@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { parseNote, type ParsedNote } from '../lib/markdown';
-import { basename, dirname, isNote, noteTitle, stripMd } from '../lib/paths';
+import { CONFIG_PATH, basename, dirname, isNote, noteTitle, stripMd } from '../lib/paths';
 import type { VaultFile } from './types';
 import { useVault } from './vault';
 
@@ -78,7 +78,7 @@ export function buildIndex(files: Record<string, VaultFile>): VaultIndex {
   for (const f of live) {
     for (let d = dirname(f.path); d; d = dirname(d)) folders.add(d);
     if (f.kind !== 'note') {
-      attachments.push(f.path);
+      if (f.path !== CONFIG_PATH) attachments.push(f.path);
       continue;
     }
     const p = parsed(f);
