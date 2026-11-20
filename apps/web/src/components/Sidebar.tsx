@@ -1,13 +1,13 @@
 import { useMemo, useState, type DragEvent } from 'react';
 import {
   CalendarDays, ChevronDown, ChevronRight, File, FileText, Files, FolderClosed, FolderOpen, FolderPlus, Hash,
-  MoreHorizontal, Search, Settings, SquarePen, Star,
+  MoreHorizontal, Search, Settings, SquarePen, Star, Trash2,
 } from 'lucide-react';
 import { useVault } from '../store/vault';
 import { useIndex } from '../store/vaultIndex';
 import { useUI, type LeftTab } from '../store/ui';
 import { fileMenu, folderMenu, newFolder, newNote, openNote, searchFor } from '../lib/actions';
-import { CONFIG_PATH, basename, dirname, isNote, noteTitle } from '../lib/paths';
+import { CONFIG_PATH, basename, dirname, isNote, isTrashed, noteTitle } from '../lib/paths';
 import { SyncBadge } from './SyncBadge';
 import { SearchPanel } from './SearchPanel';
 
@@ -75,6 +75,9 @@ export function Sidebar() {
           <CalendarDays size={18} />
         </button>
         <span className="spacer" />
+        <button className="icon-btn" title="Trash" onClick={() => set({ trashOpen: true })}>
+          <Trash2 size={18} />
+        </button>
         <button className="icon-btn" title="Settings" onClick={() => set({ settingsOpen: true })}>
           <Settings size={18} />
         </button>
@@ -101,7 +104,7 @@ function FileTree() {
   const files = useVault((s) => s.files);
   const index = useIndex();
   const tree = useMemo(
-    () => buildTree(Object.values(files).filter((f) => !f.deleted && f.path !== CONFIG_PATH).map((f) => f.path), index.folders),
+    () => buildTree(Object.values(files).filter((f) => !f.deleted && f.path !== CONFIG_PATH && !isTrashed(f.path)).map((f) => f.path), index.folders),
     [files, index.folders],
   );
   if (!tree.children.length) return <p className="muted pad">No notes yet.</p>;

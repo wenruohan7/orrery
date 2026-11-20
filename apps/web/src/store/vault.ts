@@ -4,7 +4,9 @@ import type { Settings, VaultFile } from './types';
 import { hashBlob, hashText } from '../lib/hash';
 import { applyTemplate, formatDate } from '../lib/dates';
 import { rewriteLinks } from '../lib/markdown';
-import { basename, dirname, ensureMd, isNote, joinPath, normalizePath, noteTitle, uniquePath } from '../lib/paths';
+import {
+  TRASH_DAYS, basename, dirname, ensureMd, isNote, isTrashed, joinPath, normalizePath, noteTitle, parseTrash, trashPath, uniquePath,
+} from '../lib/paths';
 import { makeResolver } from './vaultIndex';
 
 const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
@@ -16,7 +18,7 @@ export const DEFAULT_SETTINGS: Settings = {
   dailyTemplate: 'Templates/Daily note.md',
   templateFolder: 'Templates',
   attachmentFolder: 'Attachments',
-  editorMode: 'edit',
+  editorMode: 'live',
 };
 
 interface VaultState {
@@ -39,8 +41,12 @@ interface VaultState {
   saveFile(path: string, blob: Blob): Promise<void>;
   rename(oldPath: string, newPath: string): string | null;
   renameFolder(oldFolder: string, newFolder: string): void;
-  remove(path: string): void;
+  /** Move to the trash; for a file already in the trash, delete it for good. */
+  remove(path: string, deletedAt?: number): void;
   removeFolder(folder: string): void;
+  /** Put a trashed file back where it was; returns its new path. */
+  restore(trashedPath: string): string | null;
+  emptyTrash(): void;
   openDaily(date?: Date): string;
   toggleBookmark(path: string): void;
   updateSettings(patch: Partial<Settings>): void;
@@ -94,6 +100,18 @@ export const useVault = create<VaultState>((set, get) => {
     write({ ...data, path, baseRev: prev?.baseRev ?? 0, dirty: true, deleted: false });
   };
 
+  /** Delete for good: a tombstone if the server has the file, otherwise just forget it. */
+  const erase = (path: string) => {
+    const f = get().files[path];
+    if (!f) return;
+    if (f.baseRev === 0) write(null, path);
+    else write({ ...f, content: '', blob: undefined, deleted: true, dirty: true, mtime: Date.now() });
+    set((s) => ({
+      bookmarks: s.bookmarks.filter((b) => b !== path),
+      activePath: s.activePath === path ? null : s.activePath,
+    }));
+  };
+
   const saveKv = () => {
     const { settings, bookmarks } = get();
     void db.set('settings', settings);
@@ -119,11 +137,17 @@ export const useVault = create<VaultState>((set, get) => {
       const files = Object.fromEntries(list.map((f) => [f.path, f]));
       set({
         files,
-        settings: { ...DEFAULT_SETTINGS, ...settings },
+        settings: { ...DEFAULT_SETTINGS, ...settings, ...((settings?.editorMode as string) === 'edit' ? { editorMode: 'live' as const } : {}) },
         bookmarks: bookmarks ?? [],
         activePath: active && files[active] && !files[active].deleted ? active : null,
         ready: true,
       });
+      // Trash older than TRASH_DAYS is deleted for good.
+      const cutoff = Date.now() - TRASH_DAYS * 86_400_000;
+      for (const f of list) {
+        const t = parseTrash(f.path);
+        if (t && !f.deleted && t.deletedAt < cutoff) erase(f.path);
+      }
       void navigator.storage?.persist?.();
     },
 
@@ -185,7 +209,7 @@ export const useVault = create<VaultState>((set, get) => {
       if (exists(target)) throw new Error(`"${target}" already exists`);
 
       // Point links at the new name before the old one disappears.
-      const before = Object.values(get().files).filter((x) => !x.deleted);
+      const before = Object.values(get().files).filter((x) => !x.deleted && !isTrashed(x.path));
       const oldResolver = makeResolver(before.map((x) => x.path));
       const after = makeResolver(before.map((x) => (x.path === oldPath ? target : x.path)));
       const linkText = after.linkText(target);
@@ -198,7 +222,7 @@ export const useVault = create<VaultState>((set, get) => {
       const current = get().files[oldPath];
       const { activePath, bookmarks } = get();
       putNew(target, { kind: current.kind, content: current.content, blob: current.blob, hash: current.hash, mtime: Date.now() });
-      get().remove(oldPath);
+      erase(oldPath);
       set((s) => ({
         bookmarks: bookmarks.map((b) => (b === oldPath ? target : b)),
         activePath: activePath === oldPath ? target : s.activePath,
@@ -211,23 +235,36 @@ export const useVault = create<VaultState>((set, get) => {
     renameFolder(oldFolder, newFolder) {
       const to = normalizePath(newFolder);
       if (!to || to === oldFolder) return;
-      const inside = Object.values(get().files).filter((f) => !f.deleted && f.path.startsWith(oldFolder + '/'));
+      const inside = Object.values(get().files).filter((f) => !f.deleted && !isTrashed(f.path) && f.path.startsWith(oldFolder + '/'));
       for (const f of inside) get().rename(f.path, to + f.path.slice(oldFolder.length));
     },
 
-    remove(path) {
+    remove(path, deletedAt = Date.now()) {
       const f = get().files[path];
-      if (!f) return;
-      if (f.baseRev === 0) write(null, path);
-      else write({ ...f, content: '', blob: undefined, deleted: true, dirty: true, mtime: Date.now() });
-      set((s) => ({
-        bookmarks: s.bookmarks.filter((b) => b !== path),
-        activePath: s.activePath === path ? null : s.activePath,
-      }));
+      if (!f || f.deleted) return;
+      if (isTrashed(path)) return erase(path);
+      putNew(trashPath(path, deletedAt), { kind: f.kind, content: f.content, blob: f.blob, hash: f.hash, mtime: Date.now() });
+      erase(path);
     },
 
     removeFolder(folder) {
-      for (const f of Object.values(get().files)) if (!f.deleted && f.path.startsWith(folder + '/')) get().remove(f.path);
+      const now = Date.now();
+      for (const f of Object.values(get().files))
+        if (!f.deleted && !isTrashed(f.path) && f.path.startsWith(folder + '/')) get().remove(f.path, now);
+    },
+
+    restore(trashed) {
+      const info = parseTrash(trashed);
+      const f = get().files[trashed];
+      if (!info || !f || f.deleted) return null;
+      const target = uniquePath(info.original, exists);
+      putNew(target, { kind: f.kind, content: f.content, blob: f.blob, hash: f.hash, mtime: Date.now() });
+      erase(trashed);
+      return target;
+    },
+
+    emptyTrash() {
+      for (const f of Object.values(get().files)) if (!f.deleted && isTrashed(f.path)) erase(f.path);
     },
 
     openDaily(date = new Date()) {

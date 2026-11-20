@@ -22,7 +22,7 @@ const active = () => useVault.getState().activePath;
 
 export function cycleEditorMode() {
   const { settings, updateSettings } = useVault.getState();
-  const next: Record<EditorMode, EditorMode> = { edit: 'preview', preview: 'edit', split: 'edit' };
+  const next: Record<EditorMode, EditorMode> = { live: 'preview', source: 'preview', preview: 'live', split: 'live' };
   updateSettings({ editorMode: next[settings.editorMode] });
 }
 
@@ -33,6 +33,7 @@ export const COMMANDS: Command[] = [
   { id: 'switch', name: 'Quick switcher: open a note', keys: `${mod} O`, run: () => useUI.getState().set({ palette: 'switcher' }) },
   { id: 'template', name: 'Insert template', needsNote: true, run: () => useUI.getState().set({ palette: 'templates' }) },
   { id: 'mode', name: 'Toggle edit / reading view', keys: `${mod} E`, needsNote: true, run: cycleEditorMode },
+  { id: 'source', name: 'Toggle source mode (raw markdown)', needsNote: true, run: () => { const { settings, updateSettings } = useVault.getState(); updateSettings({ editorMode: settings.editorMode === 'source' ? 'live' : 'source' }); } },
   { id: 'split', name: 'Split editor and preview', needsNote: true, run: () => useVault.getState().updateSettings({ editorMode: 'split' }) },
   { id: 'solar', name: 'Open solar system', keys: `${mod} Shift S`, run: () => useUI.getState().setView('solar') },
   { id: 'fly', name: 'Find this note in the solar system', needsNote: true, run: () => flyTo(active()!) },
@@ -41,6 +42,8 @@ export const COMMANDS: Command[] = [
   { id: 'star', name: 'Star / unstar this note', needsNote: true, run: () => useVault.getState().toggleBookmark(active()!) },
   { id: 'rename', name: 'Rename or move this note', needsNote: true, run: () => renameFile(active()!) },
   { id: 'delete', name: 'Delete this note', needsNote: true, run: () => deleteFile(active()!) },
+  { id: 'history', name: 'Version history of this note', needsNote: true, run: () => useUI.getState().set({ historyPath: active() }) },
+  { id: 'trash', name: 'Open trash', run: () => useUI.getState().set({ trashOpen: true }) },
   { id: 'random', name: 'Open a random note', run: openRandom },
   { id: 'back', name: 'Go back', keys: 'Alt ←', run: () => useVault.getState().goBack() },
   { id: 'forward', name: 'Go forward', keys: 'Alt →', run: () => useVault.getState().goForward() },

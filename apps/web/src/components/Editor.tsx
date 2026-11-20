@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { EditorState, type Extension } from '@codemirror/state';
+import { Compartment, EditorState, type Extension } from '@codemirror/state';
 import {
   Decoration, EditorView, MatchDecorator, ViewPlugin, drawSelection, dropCursor, highlightActiveLine, keymap,
   placeholder, type DecorationSet, type ViewUpdate,
@@ -17,6 +17,11 @@ import { editorBridge, wrapSelection } from '../lib/editorBridge';
 import { openOrCreate, searchFor } from '../lib/actions';
 import { basename, isNote, noteTitle } from '../lib/paths';
 import { WIKILINK, splitLinkInner } from '../lib/markdown';
+import { livePreview } from './livePreview';
+import { slashCompletion } from './slashMenu';
+
+/** Swaps live preview on and off without rebuilding the editor. */
+const liveMode = new Compartment();
 
 const highlight = HighlightStyle.define([
   { tag: t.heading1, fontSize: '1.6em', fontWeight: '700', color: 'var(--h1)' },
@@ -30,7 +35,6 @@ const highlight = HighlightStyle.define([
   { tag: t.monospace, fontFamily: 'var(--mono)', color: 'var(--code)' },
   { tag: t.quote, color: 'var(--muted-strong)', fontStyle: 'italic' },
   { tag: [t.processingInstruction, t.meta, t.contentSeparator], color: 'var(--faint)' },
-  { tag: t.list, color: 'var(--accent-soft)' },
   { tag: t.keyword, color: '#c792ea' },
   { tag: [t.string, t.special(t.string)], color: '#c3e88d' },
   { tag: [t.number, t.bool, t.atom], color: '#f78c6c' },
@@ -130,7 +134,7 @@ async function insertFiles(view: EditorView, files: File[], pos: number) {
   view.dispatch({ changes: { from: pos, insert: text }, selection: { anchor: pos + text.length } });
 }
 
-function extensions(onChange: (doc: string) => void): Extension[] {
+function extensions(onChange: (doc: string) => void, live: boolean): Extension[] {
   return [
     history(),
     drawSelection(),
@@ -143,8 +147,9 @@ function extensions(onChange: (doc: string) => void): Extension[] {
     markdown({ base: markdownLanguage, codeLanguages: languages }),
     syntaxHighlighting(highlight),
     linkHighlighter,
-    autocompletion({ override: [linkCompletion, tagCompletion], icons: false }),
-    placeholder('Start writing… Type [[ to link a note.'),
+    autocompletion({ override: [slashCompletion, linkCompletion, tagCompletion], icons: false }),
+    liveMode.of(live ? livePreview : []),
+    placeholder('Start writing… Type / for blocks or [[ to link a note.'),
     keymap.of([
       { key: 'Mod-b', run: () => (wrapSelection('**'), true) },
       { key: 'Mod-i', run: () => (wrapSelection('*'), true) },
@@ -197,7 +202,7 @@ function extensions(onChange: (doc: string) => void): Extension[] {
   ];
 }
 
-export function Editor({ path }: { path: string }) {
+export function Editor({ path, live }: { path: string; live: boolean }) {
   const host = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const pathRef = useRef(path);
@@ -205,7 +210,13 @@ export function Editor({ path }: { path: string }) {
   const states = useRef(new Map<string, EditorState>());
 
   const makeState = (doc: string) =>
-    EditorState.create({ doc, extensions: extensions((d) => useVault.getState().saveNote(pathRef.current, d)) });
+    EditorState.create({ doc, extensions: extensions((d) => useVault.getState().saveNote(pathRef.current, d), liveRef.current) });
+
+  const liveRef = useRef(live);
+  useEffect(() => {
+    liveRef.current = live;
+    viewRef.current?.dispatch({ effects: liveMode.reconfigure(live ? livePreview : []) });
+  }, [live]);
 
   useEffect(() => {
     const view = new EditorView({ parent: host.current!, state: makeState(content) });

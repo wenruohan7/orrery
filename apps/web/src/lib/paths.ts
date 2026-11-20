@@ -49,4 +49,14 @@ export function uniquePath(path: string, exists: (p: string) => boolean) {
 /** Vault-wide solar system settings; synced, but hidden from the file list. */
 export const CONFIG_PATH = 'orrery.json';
 
+/** Deleted files wait here for 30 days. The folder syncs, but is hidden everywhere else. */
+export const TRASH = '.trash';
+export const TRASH_DAYS = 30;
+export const isTrashed = (p: string) => p.startsWith(TRASH + '/');
+export const trashPath = (p: string, deletedAt: number) => `${TRASH}/${deletedAt}/${p}`;
+export function parseTrash(p: string) {
+  const m = /^\.trash\/(\d+)\/(.+)$/.exec(p);
+  return m ? { deletedAt: Number(m[1]), original: m[2] } : null;
+}
+
 export const topFolder = (p: string) => (p.includes('/') ? p.slice(0, p.indexOf('/')) : '');

@@ -78,6 +78,7 @@ uniform vec3 uLightPos;
 uniform vec3 uLightColor;
 uniform float uRim;
 uniform float uSaturation;
+uniform float uDim;
 varying vec3 vNormalW;
 varying vec3 vPosW;
 varying vec3 vObj;
@@ -136,7 +137,7 @@ void main() {
   float rim = pow(1.0 - max(dot(N, V), 0.0), 3.0);
   vec3 lit = col * (0.07 + uLightColor * diff * 1.15) + glow;
   lit += rim * uRim * mix(uColor, vec3(0.6, 0.8, 1.0), 0.4) * (0.25 + diff);
-  gl_FragColor = vec4(lit, 1.0);
+  gl_FragColor = vec4(lit * (1.0 - 0.85 * uDim), 1.0);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
 }
@@ -146,6 +147,7 @@ const STAR_FRAGMENT = /* glsl */ `
 uniform vec3 uColor;
 uniform float uSeed;
 uniform float uTime;
+uniform float uDim;
 varying vec3 vNormalW;
 varying vec3 vPosW;
 varying vec3 vObj;
@@ -159,7 +161,7 @@ void main() {
   vec3 col = uColor * (0.55 + cells * 0.75) * (1.0 - spots * 0.45);
   col = mix(col, uColor * 1.3 + 0.1, pow(mu, 4.0) * 0.3);
   col *= 0.45 + 0.55 * pow(mu, 0.5);
-  gl_FragColor = vec4(col, 1.0);
+  gl_FragColor = vec4(col * (1.0 - 0.85 * uDim), 1.0);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
 }
@@ -189,6 +191,7 @@ uniform vec3 uDiskColor;
 uniform float uBrightness;
 uniform float uSpin;
 uniform float uBound;
+uniform float uDim;
 varying vec3 vWorld;
 ${NOISE}
 const float INNER = ${DISK_INNER.toFixed(2)};
@@ -241,7 +244,7 @@ void main() {
   ring = clamp(ring, 0.0, 1.5) * (1.0 - alpha);
   col += mix(uDiskColor, vec3(1.0), 0.5) * ring * uBrightness * 0.9;
   alpha = clamp(alpha + ring * 0.6, 0.0, 1.0);
-  gl_FragColor = vec4(col, alpha);
+  gl_FragColor = vec4(col * (1.0 - 0.85 * uDim), alpha);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
 }
@@ -262,6 +265,7 @@ export function planetMaterial() {
       uLightColor: { value: new Color(1, 1, 1) },
       uRim: { value: 0.6 },
       uSaturation: { value: 1 },
+      uDim: { value: 0 },
     },
   });
 }
@@ -272,7 +276,7 @@ export function starMaterial() {
   return new ShaderMaterial({
     vertexShader: SPHERE_VERTEX,
     fragmentShader: STAR_FRAGMENT,
-    uniforms: { uColor: { value: new Color() }, uSeed: { value: 0 }, uTime: { value: 0 } },
+    uniforms: { uColor: { value: new Color() }, uSeed: { value: 0 }, uTime: { value: 0 }, uDim: { value: 0 } },
   });
 }
 
@@ -296,6 +300,7 @@ export function blackHoleMaterial() {
       uBrightness: { value: 1 },
       uSpin: { value: 1 },
       uBound: { value: BLACKHOLE_BOUND },
+      uDim: { value: 0 },
     },
   });
 }

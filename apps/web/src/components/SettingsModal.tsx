@@ -5,7 +5,8 @@ import { useUI, confirmDialog } from '../store/ui';
 import { resetSyncState, syncNow, testConnection, useSync } from '../sync/sync';
 import { relativeTime } from '../lib/dates';
 import { hashBlob } from '../lib/hash';
-import { ATTACHMENT_EXT, isNote, normalizePath } from '../lib/paths';
+import type { EditorMode } from '../store/types';
+import { ATTACHMENT_EXT, isNote, isTrashed, normalizePath } from '../lib/paths';
 
 export function SettingsModal() {
   const open = useUI((s) => s.settingsOpen);
@@ -119,8 +120,9 @@ function VaultSettings() {
       </div>
       <label>
         Default view for notes
-        <select value={settings.editorMode} onChange={(e) => update({ editorMode: e.target.value as 'edit' })}>
-          <option value="edit">Editing</option>
+        <select value={settings.editorMode} onChange={(e) => update({ editorMode: e.target.value as EditorMode })}>
+          <option value="live">Live preview</option>
+          <option value="source">Source (raw markdown)</option>
           <option value="preview">Reading</option>
           <option value="split">Side by side (wide screens)</option>
         </select>
@@ -161,7 +163,7 @@ function ImportExport() {
 
   const exportVault = () => {
     const notes = Object.values(useVault.getState().files)
-      .filter((f) => !f.deleted && f.kind === 'note')
+      .filter((f) => !f.deleted && f.kind === 'note' && !isTrashed(f.path))
       .map((f) => ({ path: f.path, content: f.content }));
     const blob = new Blob([JSON.stringify({ app: 'orrery', exported: new Date().toISOString(), notes }, null, 2)], { type: 'application/json' });
     const a = document.createElement('a');

@@ -35,8 +35,29 @@ async function api(path: string, init: RequestInit = {}) {
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', ...init.headers },
   });
   if (res.status === 401) throw new SyncError('Wrong sync token');
-  if (!res.ok && res.status !== 409) throw new SyncError(`Server error ${res.status}`);
+  if (!res.ok && res.status !== 409) {
+    const body = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new SyncError(body?.error ?? `Server error ${res.status}`);
+  }
   return res;
+}
+
+export interface Version {
+  id: string;
+  time: number;
+}
+
+/** Snapshots the server kept of a file, newest first. */
+export async function fetchHistory(path: string): Promise<Version[]> {
+  if (!enabled()) throw new SyncError('Version history needs the sync server. Set it up in Settings → Sync.');
+  const res = await api(`/api/history?path=${encodeURIComponent(path)}`).catch((e) => {
+    throw e instanceof TypeError ? new SyncError('Can’t reach the sync server') : e;
+  });
+  return ((await res.json()) as { versions: Version[] }).versions;
+}
+
+export async function fetchVersion(path: string, id: string) {
+  return (await api(`/api/version?path=${encodeURIComponent(path)}&id=${id}`)).text();
 }
 
 export async function testConnection(url: string, token: string) {

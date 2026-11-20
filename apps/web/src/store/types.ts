@@ -14,7 +14,8 @@ export interface VaultFile {
   deleted: boolean;
 }
 
-export type EditorMode = 'edit' | 'preview' | 'split';
+/** live: rendered while you type; source: raw markdown; preview: reading view. */
+export type EditorMode = 'live' | 'source' | 'preview' | 'split';
 
 export interface Settings {
   syncUrl: string;

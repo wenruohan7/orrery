@@ -31,6 +31,10 @@ interface Props {
   hovered: string | null;
   focus: Focus;
   options: SceneOptions;
+  /** Search matches: these glow, everything else dims. null when not searching. */
+  highlight: Set<string> | null;
+  /** Screen area covered by the note card, as fractions of width and height to shift the view by. */
+  inset: { x: number; y: number };
   time: MutableRefObject<number>;
   onSelect(path: string | null): void;
   onHover(path: string | null): void;
@@ -41,6 +45,8 @@ export const KIND_NAMES: Record<Body['kind'], string> = {
 };
 
 const WHITE = new Color(1, 1, 1);
+/** Fingers are less precise than a mouse: make bodies easier to tap. */
+const TOUCH = typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches ? 1.6 : 1;
 
 // ---------- textures, made once ----------
 
@@ -178,9 +184,22 @@ function HitTarget({ radius, path, onSelect, onHover }: { radius: number; path: 
       }}
       onPointerOut={() => onHover(null)}
     >
-      <sphereGeometry args={[radius, 12, 8]} />
+      <sphereGeometry args={[radius * TOUCH, 12, 8]} />
       <meshBasicMaterial transparent opacity={0} depthWrite={false} />
     </mesh>
+  );
+}
+
+/** Pulsing glow around a search match. */
+function Halo({ size }: { size: number }) {
+  const ref = useRef<Group>(null);
+  useFrame(({ clock }) => ref.current?.scale.setScalar(size * (5 + Math.sin(clock.elapsedTime * 3) * 0.8)));
+  return (
+    <group ref={ref}>
+      <sprite>
+        <spriteMaterial map={glowTexture} color="#d9d2ff" blending={AdditiveBlending} transparent opacity={0.9} depthWrite={false} />
+      </sprite>
+    </group>
   );
 }
 
@@ -188,6 +207,7 @@ interface BodyProps {
   body: Body;
   design: ResolvedDesign;
   theme: ThemeId;
+  mode: 'normal' | 'match' | 'dim';
   showLabel: boolean;
   live: Live;
   register(path: string, obj: Object3D | null): void;
@@ -195,7 +215,7 @@ interface BodyProps {
   onHover(path: string | null): void;
 }
 
-function BodyMesh({ body, design, theme, showLabel, live, register, onSelect, onHover }: BodyProps) {
+function BodyMesh({ body, design, theme, mode, showLabel, live, register, onSelect, onHover }: BodyProps) {
   const size = body.size * design.size;
   const t = THEMES[theme];
   const material = useMemo(
@@ -230,6 +250,11 @@ function BodyMesh({ body, design, theme, showLabel, live, register, onSelect, on
   }, [material, rings, design, body, size, t, theme]);
 
   useEffect(() => {
+    material.uniforms.uDim.value = mode === 'dim' ? 1 : 0;
+  }, [material, mode]);
+  const glowFade = mode === 'dim' ? 0.15 : 1;
+
+  useEffect(() => {
     if (body.kind === 'blackhole') live.holes.set(body.path, { mesh: hole.current!, mat: material });
     else if (body.kind === 'star') live.stars.set(body.path, material);
     else live.planets.set(body.path, material);
@@ -256,6 +281,7 @@ function BodyMesh({ body, design, theme, showLabel, live, register, onSelect, on
           <planeGeometry args={[2, 2]} />
         </mesh>
         <HitTarget radius={size * 4} path={body.path} onSelect={onSelect} onHover={onHover} />
+        {mode === 'match' && <Halo size={size * 2} />}
         {showLabel && <Label text={body.title} height={0} y={size * DISK_OUTER * 0.8} fixed />}
       </group>
     );
@@ -271,10 +297,10 @@ function BodyMesh({ body, design, theme, showLabel, live, register, onSelect, on
       {body.kind === 'star' && design.glow > 0 && (
         <>
           <sprite scale={[size * 6 * design.glow, size * 6 * design.glow, 1]}>
-            <spriteMaterial map={glowTexture} color={design.color} blending={AdditiveBlending} transparent depthWrite={false} />
+            <spriteMaterial map={glowTexture} color={design.color} blending={AdditiveBlending} transparent opacity={glowFade} depthWrite={false} />
           </sprite>
           <sprite scale={[size * 14 * design.glow, size * 14 * design.glow, 1]}>
-            <spriteMaterial map={glowTexture} color={design.color} blending={AdditiveBlending} transparent opacity={0.22} depthWrite={false} />
+            <spriteMaterial map={glowTexture} color={design.color} blending={AdditiveBlending} transparent opacity={0.22 * glowFade} depthWrite={false} />
           </sprite>
         </>
       )}
@@ -283,14 +309,15 @@ function BodyMesh({ body, design, theme, showLabel, live, register, onSelect, on
           <ringGeometry args={[size * 1.35, size * 2.25, 96]} />
         </mesh>
       )}
-      {showLabel && <Label text={body.title} height={body.kind === 'star' ? 1.5 : 0.9} y={size + 0.3} />}
+      {mode === 'match' && <Halo size={size} />}
+      {showLabel && <Label text={body.title} height={body.kind === 'star' ? 1.5 : body.kind === 'planet' ? 0.9 : 0.6} y={size + 0.3} />}
     </group>
   );
 }
 
 // ---------- scene ----------
 
-export function Scene({ layout, designs, theme, selected, hovered, focus, options, time, onSelect, onHover }: Props) {
+export function Scene({ layout, designs, theme, selected, hovered, focus, options, highlight, inset, time, onSelect, onHover }: Props) {
   const objects = useRef(new Map<string, Object3D>());
   const rings = useRef(new Map<string, LineLoop>());
   const live = useMemo<Live>(() => ({ planets: new Map(), stars: new Map(), holes: new Map() }), []);
@@ -304,14 +331,9 @@ export function Scene({ layout, designs, theme, selected, hovered, focus, option
   // Keep the selected body in the part of the screen the note card doesn't cover.
   useEffect(() => {
     const cam = camera as PerspectiveCamera;
-    if (!selected) cam.clearViewOffset();
-    else {
-      const narrow = size.width <= 820;
-      const dx = narrow ? 0 : Math.min(392, size.width * 0.45) / 2;
-      const dy = narrow ? size.height * 0.27 : 0;
-      cam.setViewOffset(size.width, size.height, dx, dy, size.width, size.height);
-    }
-  }, [camera, selected, size]);
+    if (!inset.x && !inset.y) cam.clearViewOffset();
+    else cam.setViewOffset(size.width, size.height, size.width * inset.x, size.height * inset.y, size.width, size.height);
+  }, [camera, inset.x, inset.y, size]);
 
   const register = (path: string, obj: Object3D | null) => {
     if (obj) objects.current.set(path, obj);
@@ -330,14 +352,15 @@ export function Scene({ layout, designs, theme, selected, hovered, focus, option
     const colors = beamGeometry.getAttribute('color') as BufferAttribute;
     const c = new Color();
     layout.beams.forEach(([a, b], i) => {
-      const lit = selected === a || selected === b;
+      const lit = selected === a || selected === b || (!!highlight && highlight.has(a) && highlight.has(b));
+      const dim = !lit && (!!selected || !!highlight);
       for (const [k, p] of [[0, a], [1, b]] as const) {
-        c.set(designs.get(p)?.color ?? '#ffffff').multiplyScalar(lit ? 1.4 : selected ? beamLevel * 0.4 : beamLevel);
+        c.set(designs.get(p)?.color ?? '#ffffff').multiplyScalar(lit ? 1.4 : dim ? beamLevel * 0.25 : beamLevel);
         colors.setXYZ(i * 2 + k, c.r, c.g, c.b);
       }
     });
     colors.needsUpdate = true;
-  }, [beamGeometry, layout, selected, designs, beamLevel]);
+  }, [beamGeometry, layout, selected, designs, beamLevel, highlight]);
 
   // ----- camera flights -----
   const flight = useRef({ active: false, elapsed: 0, last: new Vector3(), following: false, dist: 30 });
@@ -493,7 +516,12 @@ export function Scene({ layout, designs, theme, selected, hovered, focus, option
           body={b}
           design={designs.get(b.path)!}
           theme={theme}
-          showLabel={b.kind === 'blackhole' || (options.labels && (b.kind === 'star' || b.kind === 'planet'))}
+          mode={!highlight ? 'normal' : highlight.has(b.path) ? 'match' : 'dim'}
+          showLabel={
+            highlight
+              ? highlight.has(b.path)
+              : b.kind === 'blackhole' || (options.labels && (b.kind === 'star' || b.kind === 'planet'))
+          }
           live={live}
           register={register}
           onSelect={onSelect}
@@ -518,7 +546,7 @@ export function Scene({ layout, designs, theme, selected, hovered, focus, option
               <lineBasicMaterial
                 color={b.kind === 'star' ? '#a39bd8' : b.kind === 'planet' ? '#8b84c9' : '#6c6890'}
                 transparent
-                opacity={selected === b.path ? 0.6 : b.kind === 'star' ? 0.14 : b.kind === 'planet' ? 0.12 : 0.08}
+                opacity={(selected === b.path ? 0.6 : b.kind === 'star' ? 0.14 : b.kind === 'planet' ? 0.12 : 0.08) * (highlight ? 0.35 : 1)}
                 depthWrite={false}
               />
             </lineLoop>

@@ -45,7 +45,8 @@ export async function renameFile(path: string) {
 }
 
 export async function deleteFile(path: string) {
-  if (await confirmDialog(`Delete "${titleOf(path)}"?`, 'This deletes it from every synced device.')) vault().remove(path);
+  if (await confirmDialog(`Delete "${titleOf(path)}"?`, 'It moves to the trash on every synced device. You can restore it for 30 days.', 'Move to trash'))
+    vault().remove(path);
 }
 
 export async function renameFolder(folder: string) {
@@ -60,6 +61,7 @@ export async function fileMenu(path: string) {
     { label: 'Show in solar system' },
     { label: starred ? 'Unstar' : 'Star' },
     { label: 'Rename or move…' },
+    { label: 'Version history' },
     { label: 'Delete', danger: true },
   ];
   switch (await menu(titleOf(path), items)) {
@@ -67,7 +69,8 @@ export async function fileMenu(path: string) {
     case 1: return flyTo(path);
     case 2: return vault().toggleBookmark(path);
     case 3: return renameFile(path);
-    case 4: return deleteFile(path);
+    case 4: return useUI.getState().set({ historyPath: path });
+    case 5: return deleteFile(path);
   }
 }
 
@@ -78,7 +81,7 @@ export async function folderMenu(folder: string) {
     case 1: return newFolder(folder);
     case 2: return renameFolder(folder);
     case 3:
-      if (await confirmDialog(`Delete folder "${folder}"?`, 'Every note and file inside it is deleted on every synced device.'))
+      if (await confirmDialog(`Delete folder "${folder}"?`, 'Everything inside moves to the trash on every synced device. You can restore it for 30 days.', 'Move to trash'))
         vault().removeFolder(folder);
   }
 }

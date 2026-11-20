@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import {
-  Bold, CalendarDays, CheckSquare, Code, Heading, Highlighter, ImagePlus, Italic, Link2, List, Orbit, Quote, Sparkles,
+  Bold, CalendarDays, CheckSquare, Code, Heading, Highlighter, History, ImagePlus, Italic, Link2, List, Orbit, Quote, Sparkles,
   SquarePen, Stamp,
 } from 'lucide-react';
 import { useVault } from '../store/vault';
@@ -27,15 +27,17 @@ function NoteEditor({ path }: { path: string }) {
   const mode = useVault((s) => s.settings.editorMode);
   const content = useVault((s) => s.files[path]?.content ?? '');
   const narrow = useNarrow();
-  const effective = narrow && mode === 'split' ? 'edit' : mode;
+  const effective = narrow && mode === 'split' ? 'live' : mode;
+  const editing = effective !== 'preview';
+  const previewing = effective === 'preview' || effective === 'split';
 
   return (
     <div className="note-view">
       <TitleBar path={path} />
-      {effective !== 'preview' && <EditorToolbar />}
+      {editing && <EditorToolbar />}
       <div className={`note-body mode-${effective}`}>
-        {effective !== 'preview' && <Editor path={path} />}
-        {effective !== 'edit' && (
+        {editing && <Editor path={path} live={effective === 'live'} />}
+        {previewing && (
           <div className="preview-scroll">
             <Preview path={path} content={content} />
           </div>
@@ -153,6 +155,9 @@ function StatusBar({ path }: { path: string }) {
           {tasks.done}/{tasks.total} tasks
         </span>
       )}
+      <button className="link-btn" onClick={() => useUI.getState().set({ historyPath: path })}>
+        <History size={13} /> History
+      </button>
       <button className="link-btn" onClick={() => flyTo(path)}>
         <Orbit size={13} /> Find in space
       </button>

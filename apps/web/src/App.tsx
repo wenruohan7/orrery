@@ -10,6 +10,7 @@ import { RightPanel } from './components/RightPanel';
 import { COMMANDS, CommandPalette, cycleEditorMode } from './components/CommandPalette';
 import { DialogHost } from './components/Dialogs';
 import { SettingsModal } from './components/SettingsModal';
+import { HistoryModal, TrashModal } from './components/TrashAndHistory';
 import { startSync } from './sync/sync';
 import { titleOf } from './store/vault';
 
@@ -45,6 +46,8 @@ export default function App() {
       <CommandPalette />
       <DialogHost />
       <SettingsModal />
+      <TrashModal />
+      <HistoryModal />
     </div>
   );
 }
@@ -91,7 +94,7 @@ function TopBar() {
           </button>
           <button
             className={`icon-btn hide-narrow ${mode === 'split' ? 'on' : ''}`}
-            onClick={() => useVault.getState().updateSettings({ editorMode: mode === 'split' ? 'edit' : 'split' })}
+            onClick={() => useVault.getState().updateSettings({ editorMode: mode === 'split' ? 'live' : 'split' })}
             title="Side by side"
             aria-label="Side by side"
           >

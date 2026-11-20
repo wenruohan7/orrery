@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { parseNote, type ParsedNote } from '../lib/markdown';
-import { CONFIG_PATH, basename, dirname, isNote, noteTitle, stripMd } from '../lib/paths';
+import { CONFIG_PATH, basename, dirname, isNote, isTrashed, noteTitle, stripMd } from '../lib/paths';
 import type { VaultFile } from './types';
 import { useVault } from './vault';
 
@@ -66,7 +66,7 @@ export function makeResolver(paths: string[]) {
 }
 
 export function buildIndex(files: Record<string, VaultFile>): VaultIndex {
-  const live = Object.values(files).filter((f) => !f.deleted);
+  const live = Object.values(files).filter((f) => !f.deleted && !isTrashed(f.path));
   const { resolve, linkText } = makeResolver(live.map((f) => f.path));
 
   const notes: NoteInfo[] = [];

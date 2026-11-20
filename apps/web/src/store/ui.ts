@@ -22,6 +22,9 @@ interface UIState {
   search: string;
   palette: PaletteMode | null;
   settingsOpen: boolean;
+  trashOpen: boolean;
+  /** Note whose version history is open. */
+  historyPath: string | null;
   dialog: Dialog | null;
   collapsed: string[];
   /** Note the solar view should fly to when it opens. */
@@ -49,6 +52,8 @@ export const useUI = create<UIState>((set, get) => ({
   search: '',
   palette: null,
   settingsOpen: false,
+  trashOpen: false,
+  historyPath: null,
   dialog: null,
   collapsed: Array.isArray(stored.collapsed) ? stored.collapsed : [],
   solarFocus: null,

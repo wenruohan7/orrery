@@ -1,4 +1,5 @@
-import { mkdir, readdir, readFile, rm, rmdir, stat, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, readdir, readFile, rm, rmdir, stat, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { networkInterfaces } from 'node:os';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
@@ -11,6 +12,9 @@ const META_DIR = join(VAULT, '.orrery');
 const META_FILE = join(META_DIR, 'meta.json');
 const ALLOWED = /\.(md|png|jpe?g|gif|webp|svg|avif|mp3|m4a|wav|ogg|flac|mp4|webm|mov|pdf|txt|csv|json)$/i;
 const MAX_UPLOAD = 50 * 1024 * 1024;
+/** The app's trash folder is the one hidden folder that syncs. */
+const TRASH = '.trash';
+const HISTORY = process.env.ORRERY_HISTORY !== 'off';
 
 interface Entry {
   rev: number;
@@ -57,7 +61,7 @@ const isNote = (p: string) => /\.md$/i.test(p);
 
 async function walk(dir: string, out: string[]) {
   for (const ent of await readdir(dir, { withFileTypes: true })) {
-    if (ent.name.startsWith('.')) continue;
+    if (ent.name.startsWith('.') && !(dir === VAULT && ent.name === TRASH)) continue;
     const full = join(dir, ent.name);
     if (ent.isDirectory()) await walk(full, out);
     else if (ent.isFile() && ALLOWED.test(ent.name)) out.push(relative(VAULT, full).split(sep).join('/'));
@@ -88,14 +92,18 @@ async function rescan() {
       changed = true;
     }
   }
-  if (changed) await saveMeta();
+  if (changed) {
+    await saveMeta();
+    scheduleCommit();
+  }
 }
 
 function safePath(input: unknown) {
   if (typeof input !== 'string' || !input) throw new HttpError(400, 'Missing path');
   const rel = input.replace(/\\/g, '/').replace(/^\/+/, '');
   const segments = rel.split('/');
-  if (segments.some((s) => !s || s === '.' || s === '..' || s.startsWith('.'))) throw new HttpError(400, 'Invalid path');
+  if (segments.some((s, i) => !s || s === '.' || s === '..' || (s.startsWith('.') && !(i === 0 && s === TRASH))))
+    throw new HttpError(400, 'Invalid path');
   if (!ALLOWED.test(rel)) throw new HttpError(400, 'File type not allowed');
   const full = resolve(VAULT, rel);
   if (!full.startsWith(VAULT + sep)) throw new HttpError(400, 'Invalid path');
@@ -115,6 +123,51 @@ async function removeEmptyDirs(dir: string) {
     await rmdir(dir).catch(() => {});
     dir = dirname(dir);
   }
+}
+
+// ---------- version history: the vault folder is a git repository ----------
+
+let gitReady = false;
+let commitTimer: ReturnType<typeof setTimeout> | undefined;
+
+async function git(args: string[]) {
+  const proc = Bun.spawn(['git', '-c', 'user.name=Orrery', '-c', 'user.email=orrery@localhost', ...args], {
+    cwd: VAULT,
+    stdout: 'pipe',
+    stderr: 'pipe',
+  });
+  const [out, err, code] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
+  if (code !== 0) throw new Error(err.trim() || `git ${args[0]} failed`);
+  return out;
+}
+
+async function setupHistory() {
+  if (!HISTORY) return;
+  try {
+    if (!existsSync(join(VAULT, '.git'))) await git(['init', '-q']);
+    // Keep the token and sync state out of history without touching the vault's own .gitignore.
+    const exclude = join(VAULT, '.git', 'info', 'exclude');
+    await mkdir(dirname(exclude), { recursive: true });
+    if (!(await readFile(exclude, 'utf8').catch(() => '')).includes('.orrery/')) await appendFile(exclude, '\n.orrery/\n');
+    gitReady = true;
+    await commitNow();
+  } catch (e) {
+    console.warn(`  Version history is off (${(e as Error).message}). Install git to turn it on.`);
+  }
+}
+
+async function commitNow() {
+  if (!gitReady) return;
+  await git(['add', '-A']);
+  if (!(await git(['status', '--porcelain'])).trim()) return;
+  await git(['commit', '-q', '-m', `Orrery snapshot ${new Date().toISOString()}`]);
+}
+
+/** Snapshot shortly after edits settle, so a burst of typing becomes one version. */
+function scheduleCommit() {
+  if (!gitReady) return;
+  clearTimeout(commitTimer);
+  commitTimer = setTimeout(() => void serial(commitNow).catch((e) => console.error('history:', e.message)), 20_000);
 }
 
 const routes: Record<string, (req: Request, url: URL) => Promise<Response>> = {
@@ -142,6 +195,31 @@ const routes: Record<string, (req: Request, url: URL) => Promise<Response>> = {
       return new Response(Bun.file(full));
     }),
 
+  'GET /api/history': async (_req, url) => {
+    const { rel } = safePath(url.searchParams.get('path'));
+    if (!gitReady) throw new HttpError(501, 'Version history is off on the server');
+    const out = await git(['log', '-n', '60', '--format=%H%x09%ct', '--', rel]).catch(() => '');
+    const versions = out
+      .trim()
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => {
+        const [id, time] = line.split('\t');
+        return { id, time: Number(time) * 1000 };
+      });
+    return Response.json({ versions });
+  },
+
+  'GET /api/version': async (_req, url) => {
+    const { rel } = safePath(url.searchParams.get('path'));
+    const id = url.searchParams.get('id') ?? '';
+    if (!gitReady) throw new HttpError(501, 'Version history is off on the server');
+    if (!/^[0-9a-f]{7,40}$/.test(id)) throw new HttpError(400, 'Invalid version');
+    // A version may be a deletion of the file; fall back to empty text.
+    const text = await git(['show', `${id}:${rel}`]).catch(() => '');
+    return new Response(text, { headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
+  },
+
   'PUT /api/file': (req) =>
     serial(async () => {
       const length = Number(req.headers.get('content-length') ?? 0);
@@ -161,6 +239,7 @@ const routes: Record<string, (req: Request, url: URL) => Promise<Response>> = {
       const st = await stat(full);
       meta.files[rel] = { rev: ++meta.rev, hash, deleted: false, mtime: st.mtimeMs, size: st.size };
       await saveMeta();
+      scheduleCommit();
       return Response.json({ rev: meta.rev, hash });
     }),
 
@@ -176,6 +255,7 @@ const routes: Record<string, (req: Request, url: URL) => Promise<Response>> = {
       await removeEmptyDirs(dirname(full));
       meta.files[rel] = { ...e, rev: ++meta.rev, deleted: true };
       await saveMeta();
+      scheduleCommit();
       return Response.json({ rev: meta.rev });
     }),
 };
@@ -207,6 +287,8 @@ async function serveStatic(url: URL) {
   if (await index.exists()) return new Response(index, { headers: { 'Cache-Control': 'no-cache' } });
   return new Response('Orrery sync server is running. Build the web app (bun run build) to serve it from here.', { status: 404 });
 }
+
+await setupHistory();
 
 Bun.serve({
   port: PORT,
@@ -240,6 +322,7 @@ console.log(`
   Orrery sync server
   vault:  ${VAULT}
   token:  ${TOKEN}
+  history: ${gitReady ? 'on (git snapshots in the vault folder)' : 'off'}
   local:  http://localhost:${PORT}
 ${lanUrls.map((u) => `  lan:    ${u}`).join('\n')}
 `);
