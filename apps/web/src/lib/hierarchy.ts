@@ -97,17 +97,28 @@ export function computeHierarchy(index: VaultIndex): Hierarchy {
     const local = (p: string) => [...(adjacency.get(p) ?? [])].filter((q) => members.has(q));
     const rank = (a: string, b: string) => local(b).length - local(a).length || degree(b) - degree(a) || words(b) - words(a) || a.localeCompare(b);
 
+    // Orbits settings, read before choosing the core so they can shape that choice.
+    const targets = new Map<string, string>();
+    for (const n of notes) {
+      const target = explicitOrbit(n, index.resolve);
+      if (target && target !== n.path && members.has(target)) targets.set(n.path, target);
+    }
+    const orbitedBy = new Map<string, number>();
+    for (const t of targets.values()) orbitedBy.set(t, (orbitedBy.get(t) ?? 0) + 1);
+
+    // Without a folder note, the core is the note most others revolve around. A note that
+    // orbits something itself can't be the core, and ties go by name, never by word count,
+    // so typing in a new star can't swap it with the black hole.
     const folderNote = key ? notes.find((n) => n.path === `${key}/${key}.md`) : notes.find((n) => /^(welcome|home|index|readme)\.md$/i.test(n.path));
-    const core = folderNote?.path ?? notes.map((n) => n.path).sort(rank)[0];
+    const pull = (p: string) => local(p).length + (orbitedBy.get(p) ?? 0);
+    const coreRank = (a: string, b: string) => pull(b) - pull(a) || degree(b) - degree(a) || a.localeCompare(b);
+    const free = notes.map((n) => n.path).filter((p) => !targets.has(p));
+    const core = folderNote?.path ?? (free.length ? free : notes.map((n) => n.path)).sort(coreRank)[0];
     galaxies.push({ id: gid, name: key || 'Home', core, folder: key });
 
     // Explicit orbits only count inside the same galaxy, and never in a loop.
-    const wanted = new Map<string, string>();
-    for (const n of notes) {
-      if (n.path === core) continue;
-      const target = explicitOrbit(n, index.resolve);
-      if (target && target !== n.path && members.has(target)) wanted.set(n.path, target);
-    }
+    const wanted = new Map(targets);
+    wanted.delete(core);
     for (const child of [...wanted.keys()]) {
       const seen = new Set([child]);
       for (let p = wanted.get(child); p; p = wanted.get(p)) {

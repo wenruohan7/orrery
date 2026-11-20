@@ -296,11 +296,11 @@ function BodyMesh({ body, design, theme, mode, showLabel, live, register, onSele
       <HitTarget radius={Math.max(size * 1.5, size + 0.7)} path={body.path} onSelect={onSelect} onHover={onHover} />
       {body.kind === 'star' && design.glow > 0 && (
         <>
-          <sprite scale={[size * 6 * design.glow, size * 6 * design.glow, 1]}>
+          <sprite scale={[size * 4 * design.glow, size * 4 * design.glow, 1]}>
             <spriteMaterial map={glowTexture} color={design.color} blending={AdditiveBlending} transparent opacity={glowFade} depthWrite={false} />
           </sprite>
-          <sprite scale={[size * 14 * design.glow, size * 14 * design.glow, 1]}>
-            <spriteMaterial map={glowTexture} color={design.color} blending={AdditiveBlending} transparent opacity={0.22 * glowFade} depthWrite={false} />
+          <sprite scale={[size * 9 * design.glow, size * 9 * design.glow, 1]}>
+            <spriteMaterial map={glowTexture} color={design.color} blending={AdditiveBlending} transparent opacity={0.18 * glowFade} depthWrite={false} />
           </sprite>
         </>
       )}
@@ -310,7 +310,7 @@ function BodyMesh({ body, design, theme, mode, showLabel, live, register, onSele
         </mesh>
       )}
       {mode === 'match' && <Halo size={size} />}
-      {showLabel && <Label text={body.title} height={body.kind === 'star' ? 1.5 : body.kind === 'planet' ? 0.9 : 0.6} y={size + 0.3} />}
+      {showLabel && <Label text={body.title} height={body.kind === 'star' ? 1.0 : body.kind === 'planet' ? 0.6 : 0.4} y={size + 0.2} />}
     </group>
   );
 }
@@ -372,7 +372,7 @@ export function Scene({ layout, designs, theme, selected, hovered, focus, option
     const body = focus.path ? layout.byPath.get(focus.path) : null;
     if (body) {
       const s = body.size * (designs.get(body.path)?.size ?? 1);
-      f.dist = body.kind === 'blackhole' ? s * DISK_OUTER * 2.6 : body.kind === 'star' ? s * 9 + 8 : body.kind === 'planet' ? s * 9 + 5 : s * 12 + 3;
+      f.dist = body.kind === 'blackhole' ? s * DISK_OUTER * 2.6 : body.kind === 'star' ? s * 10 + 5 : body.kind === 'planet' ? s * 12 + 3 : s * 16 + 2;
     } else if (focus.galaxy != null) {
       f.dist = layout.galaxies[focus.galaxy].extent * 1.5 + 10;
     } else f.dist = layout.radius * 1.05 + 15;

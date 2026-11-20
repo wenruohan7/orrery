@@ -85,10 +85,11 @@ export function computeLayout(index: VaultIndex, h: Hierarchy = computeHierarchy
 
     /** Lay out a planet and its moons; returns the planet body, its moons and how far they reach. */
     const planetSystem = (p: string, parent: string, light: string) => {
-      const size = clamp(0.5 + 0.17 * Math.sqrt(degree(p)) + 0.1 * Math.log10(1 + words(p)), 0.5, 1.5);
+      // Each level is clearly smaller than what it orbits: black hole > star > planet > moon.
+      const size = clamp(0.3 + 0.08 * Math.sqrt(degree(p)) + 0.05 * Math.log10(1 + words(p)), 0.3, 0.75);
       let mr = size * 1.9 + 0.6;
       const moons = kids(p).map((m, j) => {
-        const msize = clamp(0.2 + 0.06 * Math.sqrt(degree(m)) + 0.04 * Math.log10(1 + words(m)), 0.2, 0.45);
+        const msize = clamp(0.12 + 0.03 * Math.sqrt(degree(m)) + 0.02 * Math.log10(1 + words(m)), 0.12, 0.25);
         const orbit = mr + msize;
         mr = orbit + msize + 0.5;
         return {
@@ -106,7 +107,7 @@ export function computeLayout(index: VaultIndex, h: Hierarchy = computeHierarchy
 
     let r = horizon * DISK_OUTER * 1.25 + 6;
     stars.forEach((s, i) => {
-      const size = clamp(1.1 + 0.2 * Math.sqrt(degree(s)) + 0.12 * Math.log10(1 + words(s)), 1.1, 2.6);
+      const size = clamp(0.6 + 0.12 * Math.sqrt(degree(s)) + 0.06 * Math.log10(1 + words(s)), 0.6, 1.3);
       let pr = size * 2.6 + 2;
       const inner: Body[] = [];
       kids(s).forEach((p, j) => {
@@ -144,7 +145,7 @@ export function computeLayout(index: VaultIndex, h: Hierarchy = computeHierarchy
       out.push({
         path: a, title: title(a), kind: 'asteroid', galaxy: gid, parent: core, light: core, orbit,
         phase: seeded(a) * Math.PI * 2, speed: orbitalSpeed(orbit, 14), tilt: tiltFor(a, 0.18),
-        size: 0.22 + seeded(a + 's') * 0.18, degree: 0, satellites: 0, seed: seeded(a),
+        size: 0.12 + seeded(a + 's') * 0.1, degree: 0, satellites: 0, seed: seeded(a),
       });
     });
 
