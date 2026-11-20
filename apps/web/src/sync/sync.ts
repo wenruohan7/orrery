@@ -142,6 +142,9 @@ async function pull() {
 
   for (const entry of changes) {
     const local = vault().files[entry.path];
+    // This device already has that revision, usually because it just uploaded it. Anything typed
+    // since is newer, not a conflict, so leave it alone for the next upload.
+    if (local && local.baseRev >= entry.rev) continue;
     if (entry.deleted) {
       if (!local) continue;
       if (local.dirty && !local.deleted) vault().putSynced(entry.path, { ...local, baseRev: 0 });
