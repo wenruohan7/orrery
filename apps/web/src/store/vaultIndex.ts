@@ -143,5 +143,7 @@ export function useIndex() {
 
 /** Changes only when notes, folders or links change, not on every keystroke. */
 export function structureKey(index: VaultIndex) {
-  return index.notes.map((n) => `${n.path}>${n.outLinks.join(',')}#${n.parsed.tags[0] ?? ''}`).join('\n');
+  return index.notes
+    .map((n) => `${n.path}>${n.outLinks.join(',')}#${n.parsed.tags[0] ?? ''}@${String(n.parsed.frontmatter['orrery-orbits'] ?? '')}`)
+    .join('\n');
 }

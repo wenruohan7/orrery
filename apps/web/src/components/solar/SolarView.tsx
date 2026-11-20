@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { Canvas } from '@react-three/fiber';
 import {
-  ArrowUp, ChevronLeft, ChevronRight, CircleDot, Eye, EyeOff, Home, MoonStar, Orbit, Paintbrush, Palette, Pause, Play, Search, Sparkles,
+  ArrowUp, ChevronLeft, ChevronRight, CircleDot, CircleHelp, Eye, EyeOff, Home, MoonStar, Orbit, Paintbrush, Palette, Pause, Play, Search, Sparkles,
   SquareArrowOutUpRight, Waypoints, X,
 } from 'lucide-react';
 import { useIndex, structureKey, type VaultIndex } from '../../store/vaultIndex';
@@ -16,6 +16,10 @@ import { Preview } from '../Preview';
 import { addLinkedNote, newNote, openNote } from '../../lib/actions';
 import { fuzzyScore } from '../../lib/fuzzy';
 import { createSampleVault } from '../../lib/sample';
+import { CHILD_KIND, KIND_LABEL, useHierarchy } from '../../lib/hierarchy';
+import { SkyGuide } from './SkyGuide';
+
+const GUIDE_SEEN = 'orrery-sky-guide-seen';
 
 const cap = (s: string) => s[0].toUpperCase() + s.slice(1);
 /** The colour that represents a body in lists: the disk for black holes. */
@@ -74,6 +78,22 @@ export default function SolarView() {
   const [hovered, setHovered] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [galaxyOpen, setGalaxyOpen] = useState(false);
+  // The guide opens by itself the first time someone visits the sky.
+  const [guideOpen, setGuideOpen] = useState(() => {
+    try {
+      return localStorage.getItem(GUIDE_SEEN) !== '1';
+    } catch {
+      return false;
+    }
+  });
+  const closeGuide = () => {
+    setGuideOpen(false);
+    try {
+      localStorage.setItem(GUIDE_SEEN, '1');
+    } catch {
+      /* storage unavailable */
+    }
+  };
   /** On phones the card can shrink to a strip so the sky stays visible. */
   const [peek, setPeek] = useState(true);
   const [focus, setFocus] = useState<Focus>({ path: null, galaxy: null, nonce: 0 });
@@ -167,7 +187,7 @@ export default function SolarView() {
   }
 
   // Shift the view so the focused body sits beside (desktop) or above (phone) the card.
-  const cardOpen = !!selected || galaxyOpen;
+  const cardOpen = !!selected || galaxyOpen || guideOpen;
   const inset = !cardOpen ? { x: 0, y: 0 } : narrow ? { x: 0, y: selected && peek ? 0.1 : 0.27 } : { x: 0.17, y: 0 };
 
   const r = layout.radius;
@@ -206,10 +226,23 @@ export default function SolarView() {
         onHome={() => flyGalaxy(null)}
         onDesign={() => {
           setSelected(null);
+          closeGuide();
           setGalaxyOpen((o) => !o);
         }}
         designOpen={galaxyOpen}
+        onGuide={() => {
+          setSelected(null);
+          setGalaxyOpen(false);
+          if (guideOpen) closeGuide();
+          else setGuideOpen(true);
+        }}
+        guideOpen={guideOpen}
       />
+      {guideOpen && !selected && !galaxyOpen && (
+        <div className="side-card">
+          <SkyGuide onClose={closeGuide} />
+        </div>
+      )}
       {galaxyOpen && !selected && (
         <div className="side-card">
           <GalaxyPanel config={config} onClose={() => setGalaxyOpen(false)} />
@@ -328,9 +361,11 @@ interface ControlsProps {
   onHome(): void;
   onDesign(): void;
   designOpen: boolean;
+  onGuide(): void;
+  guideOpen: boolean;
 }
 
-function Controls({ options, setOptions, onHome, onDesign, designOpen }: ControlsProps) {
+function Controls({ options, setOptions, onHome, onDesign, designOpen, onGuide, guideOpen }: ControlsProps) {
   const toggle = (k: 'paused' | 'labels' | 'beams' | 'orbits') => setOptions((o) => ({ ...o, [k]: !o[k] }));
   return (
     <div className="solar-controls">
@@ -361,6 +396,9 @@ function Controls({ options, setOptions, onHome, onDesign, designOpen }: Control
       </button>
       <button className={`icon-btn ${designOpen ? 'on' : ''}`} onClick={onDesign} title="Galaxy design: themes and rules" aria-label="Galaxy design">
         <Palette size={17} />
+      </button>
+      <button className={`icon-btn ${guideOpen ? 'on' : ''}`} onClick={onGuide} title="How the sky works" aria-label="How the sky works">
+        <CircleHelp size={17} />
       </button>
     </div>
   );
@@ -411,7 +449,9 @@ function BodyCard({ layout, designs, body, nav, peek, setPeek, onFly, onClose }:
             ? `Moon of ${parent?.title}`
             : `Asteroid in the ${galaxy.name} belt. Link it to pull it into orbit.`;
 
-  const addLabel = body.kind === 'blackhole' ? 'Add star' : body.kind === 'star' ? 'Add planet' : 'Add moon';
+  const node = useHierarchy().nodes.get(path);
+  const childKind = CHILD_KIND[body.kind];
+  const addLabel = childKind ? `Add ${KIND_LABEL[childKind]}` : '';
   const satelliteLabel = body.kind === 'blackhole' ? 'Orbiting' : body.kind === 'star' ? 'Planets' : 'Moons';
   const siblingLabel = body.kind === 'blackhole' ? 'galaxies' : `${KIND_NAMES[body.kind]}s`;
   const color = swatch(body, design);
@@ -497,7 +537,7 @@ function BodyCard({ layout, designs, body, nav, peek, setPeek, onFly, onClose }:
           <button className="btn primary" onClick={() => openNote(path)}>
             <SquareArrowOutUpRight size={15} /> Open note
           </button>
-          {body.kind !== 'moon' && body.kind !== 'asteroid' && (
+          {childKind && (
             <button
               className="btn"
               onClick={async () => {
@@ -509,6 +549,21 @@ function BodyCard({ layout, designs, body, nav, peek, setPeek, onFly, onClose }:
             </button>
           )}
         </div>
+        {node && body.kind !== 'blackhole' && (
+          <div className="space-orbit card-orbit">
+            <span className="muted small">Orbits</span>
+            <b className="small">{node.parent ? layout.byPath.get(node.parent)?.title ?? '—' : 'nothing'}</b>
+            <span className="muted small">· {node.explicit ? 'set by you' : body.kind === 'asteroid' ? 'not in orbit' : 'from links'}</span>
+            <button className="btn small" onClick={() => useUI.getState().set({ orbitPicker: path })}>
+              Change
+            </button>
+          </div>
+        )}
+        {childKind && satellites.length === 0 && (
+          <p className="muted small card-hint">
+            No {KIND_LABEL[childKind]}s yet. <b>{addLabel}</b> creates a new note that orbits this {KIND_LABEL[body.kind]}.
+          </p>
+        )}
         <div className="card-tabs">
           <button className={tab === 'note' ? 'on' : ''} onClick={() => setTab('note')}>
             Note

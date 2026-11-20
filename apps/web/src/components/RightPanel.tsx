@@ -1,8 +1,11 @@
 import { useMemo, useState, type ReactNode } from 'react';
-import { ChevronDown, ChevronRight, Link2, Unlink } from 'lucide-react';
+import { ChevronDown, ChevronRight, Link2, Orbit, Plus, Unlink } from 'lucide-react';
 import { useVault } from '../store/vault';
 import { useIndex, type VaultIndex } from '../store/vaultIndex';
-import { openNote, openOrCreate, searchFor } from '../lib/actions';
+import { addLinkedNote, flyTo, openNote, openOrCreate, searchFor } from '../lib/actions';
+import { CHILD_KIND, KIND_LABEL, useHierarchy } from '../lib/hierarchy';
+import { useUI } from '../store/ui';
+import { KindDot } from './SpaceDialogs';
 import { scrollToLine } from '../lib/editorBridge';
 import { isNote, noteTitle } from '../lib/paths';
 import { maskCode } from '../lib/markdown';
@@ -18,6 +21,73 @@ function Section({ title, count, children, initiallyOpen = true }: { title: stri
       </button>
       {open && <div className="panel-section-body">{children}</div>}
     </section>
+  );
+}
+
+/** Where this note sits in the solar system, and how to move it. */
+function SpaceSection({ path }: { path: string }) {
+  const h = useHierarchy();
+  const node = h.nodes.get(path);
+  if (!node) return null;
+  const galaxy = h.galaxies[node.galaxy];
+  const child = CHILD_KIND[node.kind];
+  const plural = (k: string, n: number) => `${n} ${k}${n === 1 ? '' : 's'}`;
+  const childKinds = node.kind === 'blackhole' ? 'body' : child ?? 'moon';
+
+  return (
+    <Section title="In space">
+      <div className="space-role">
+        <KindDot kind={node.kind} />
+        <span>
+          <b>{KIND_LABEL[node.kind][0].toUpperCase() + KIND_LABEL[node.kind].slice(1)}</b>{' '}
+          {node.kind === 'blackhole' ? 'at the heart of' : 'in'} the <b>{galaxy.name}</b> galaxy
+        </span>
+      </div>
+      {node.kind === 'blackhole' ? (
+        <p className="muted small space-help">Every note in the {galaxy.folder ? `“${galaxy.folder}” folder` : 'vault root'} belongs to this galaxy.</p>
+      ) : (
+        <div className="space-orbit">
+          <span className="muted small">Orbits</span>
+          {node.orbitParent ? (
+            <button className="link-btn" onClick={() => openNote(node.parent ?? node.orbitParent!)}>
+              {noteTitle(node.parent ?? node.orbitParent)}
+            </button>
+          ) : (
+            <span className="small">nothing</span>
+          )}
+          <span className="muted small">· {node.explicit ? 'set by you' : node.kind === 'asteroid' ? 'not linked yet' : 'from links'}</span>
+          <button className="btn small" onClick={() => useUI.getState().set({ orbitPicker: path })}>
+            Change
+          </button>
+        </div>
+      )}
+      {node.satellites.length > 0 && (
+        <div className="space-kids">
+          <span className="muted small">{plural(childKinds, node.satellites.length)} orbiting</span>
+          {node.satellites.map((s) => (
+            <button key={s} className="pill" onClick={() => openNote(s)}>
+              {noteTitle(s)}
+            </button>
+          ))}
+        </div>
+      )}
+      <div className="row wrap space-actions">
+        {child && (
+          <button
+            className="btn small"
+            onClick={async () => {
+              const created = await addLinkedNote(path);
+              if (created) openNote(created);
+            }}
+          >
+            <Plus size={13} /> Add {KIND_LABEL[child]}
+          </button>
+        )}
+        <button className="btn small" onClick={() => flyTo(path)}>
+          <Orbit size={13} /> Find in space
+        </button>
+      </div>
+    </Section>
   );
 }
 
@@ -50,6 +120,7 @@ export function RightPanel() {
   return (
     <aside className="sidebar right">
       <div className="sidebar-body">
+        <SpaceSection path={path} />
         <Section title="Backlinks" count={backlinks.length}>
           {backlinks.length === 0 && <p className="muted small">No notes link here yet.</p>}
           {backlinks.map((b) => (

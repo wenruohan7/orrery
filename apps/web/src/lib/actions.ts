@@ -3,6 +3,8 @@ import { getIndex } from '../store/vaultIndex';
 import { ask, closeDrawersOnNarrow, confirmDialog, menu, useUI } from '../store/ui';
 import { basename, dirname, isNote, joinPath, noteTitle } from './paths';
 import { applyTemplate } from './dates';
+import { setProperties } from './markdown';
+import { CHILD_KIND, KIND_LABEL, ORBITS_PROP, computeHierarchy } from './hierarchy';
 import { insertAtCursor } from './editorBridge';
 
 const vault = () => useVault.getState();
@@ -19,10 +21,25 @@ export function openOrCreate(target: string) {
   openNote(existing ?? vault().createNote(target, '', false));
 }
 
-export async function newNote(folder = '') {
-  const name = await ask('New note', '', 'Create', 'Note name');
-  if (name == null) return;
-  openNote(vault().createNote(joinPath(folder, name.trim() || 'Untitled')));
+/** Opens the New note dialog, which also asks what the note should orbit. */
+export function newNote(folder = '', orbit?: string) {
+  useUI.getState().set({ newNote: { folder, orbit } });
+}
+
+/** Put a note in orbit around `target` (null: let links decide again). */
+export function setOrbit(path: string, target: string | null) {
+  const file = vault().files[path];
+  if (!file) return;
+  const value = target ? `"[[${getIndex().linkText(target)}]]"` : null;
+  vault().saveNote(path, setProperties(file.content, { [ORBITS_PROP]: value }));
+}
+
+/** Create a note already orbiting `parent`, in the parent's folder so it joins the same galaxy. */
+export function createInOrbit(name: string, parent: string | null, folder = '') {
+  const clean = name.trim() || 'Untitled';
+  if (!parent) return vault().createNote(joinPath(folder, clean), `# ${basename(clean)}\n\n`, false);
+  const content = `---\n${ORBITS_PROP}: "[[${getIndex().linkText(parent)}]]"\n---\n# ${basename(clean)}\n\n`;
+  return vault().createNote(joinPath(dirname(parent), basename(clean)), content, false);
 }
 
 export async function newFolder(parent = '') {
@@ -112,14 +129,13 @@ export function insertTemplate(path: string) {
   }
 }
 
-/** Create a note linked from `from`; in the solar system it becomes a moon or planet of it. */
+/** Create a new star, planet or moon orbiting `from`. Returns its path, or null if cancelled. */
 export async function addLinkedNote(from: string) {
-  const name = (await ask(`New note linked from "${titleOf(from)}"`, '', 'Create', 'Note name'))?.trim();
+  const kind = computeHierarchy(getIndex()).nodes.get(from)?.kind;
+  const child = (kind && CHILD_KIND[kind]) ?? 'moon';
+  const name = (await ask(`New ${KIND_LABEL[child]} orbiting "${titleOf(from)}"`, '', 'Create', 'Note name'))?.trim();
   if (!name) return null;
-  const path = vault().createNote(joinPath(dirname(from), name), `Linked from [[${getIndex().linkText(from)}]]\n\n`, false);
-  const content = vault().files[from]?.content ?? '';
-  vault().saveNote(from, content.replace(/\s*$/, '') + `\n\n- [[${getIndex().linkText(path)}]]\n`);
-  return path;
+  return createInOrbit(name, from);
 }
 
 export function openRandom() {

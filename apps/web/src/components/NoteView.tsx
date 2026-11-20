@@ -14,6 +14,8 @@ import { flyTo, newNote, openNote } from '../lib/actions';
 import { createSampleVault } from '../lib/sample';
 import { basename, dirname, isAudio, isImage, isNote, isPdf, isVideo, noteTitle } from '../lib/paths';
 import { getIndex } from '../store/vaultIndex';
+import { KIND_LABEL, useHierarchy } from '../lib/hierarchy';
+import { KindDot } from './SpaceDialogs';
 
 export function NoteView() {
   const path = useVault((s) => s.activePath);
@@ -99,7 +101,28 @@ function TitleBar({ path }: { path: string }) {
         aria-label="Note title"
       />
       {error && <div className="title-error">{error}</div>}
+      <SpaceChip path={path} />
     </div>
+  );
+}
+
+/** One-line summary of where the note sits in space; tap to change its orbit. */
+function SpaceChip({ path }: { path: string }) {
+  const node = useHierarchy().nodes.get(path);
+  if (!node) return null;
+  const label = KIND_LABEL[node.kind];
+  const target = node.parent ?? node.orbitParent;
+  return (
+    <button
+      className="space-chip"
+      onClick={() => useUI.getState().set({ orbitPicker: node.kind === 'blackhole' ? null : path })}
+      title={node.kind === 'blackhole' ? 'This note is a black hole' : 'Change what this note orbits'}
+    >
+      <KindDot kind={node.kind} />
+      {label[0].toUpperCase() + label.slice(1)}
+      {node.kind === 'blackhole' ? ' · heart of its galaxy' : target ? ` · orbits ${noteTitle(target)}` : ''}
+      {node.kind === 'asteroid' && ' · tap to put it in orbit'}
+    </button>
   );
 }
 

@@ -92,6 +92,7 @@ The solar system shows your whole vault in 3D.
 - **Asteroids** are notes with no links yet.
 - **Light beams** are links between bodies that don't orbit each other.
 
+Every note has an **Orbits** setting (under its title, or on its card in space) to choose exactly what it circles.
 Tap a body to see its note, or open its **Design** tab to change its colour, surface, rings and size.
 The palette button changes the whole galaxy's theme and lets you style notes by tag or folder.
 Related: [[Linking notes]], [[Graph view]]`,
