@@ -1,0 +1,13 @@
+{
+  "name": "orrery",
+  "private": true,
+  "workspaces": ["apps/web", "server"],
+  "scripts": {
+    "dev": "cd apps/web && bun run dev",
+    "server": "cd server && bun run start",
+    "build": "cd apps/web && bun run build",
+    "start": "cd apps/web && bun run build && cd ../../server && bun run start",
+    "desktop": "cd apps/web && bun run tauri dev",
+    "desktop:build": "cd apps/web && bun run tauri build"
+  }
+}
