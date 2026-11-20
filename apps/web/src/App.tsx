@@ -11,6 +11,7 @@ import { COMMANDS, CommandPalette, cycleEditorMode } from './components/CommandP
 import { DialogHost } from './components/Dialogs';
 import { SettingsModal } from './components/SettingsModal';
 import { HistoryModal, TrashModal } from './components/TrashAndHistory';
+import { InstallHint } from './components/InstallHint';
 import { startSync } from './sync/sync';
 import { titleOf } from './store/vault';
 
@@ -48,6 +49,7 @@ export default function App() {
       <SettingsModal />
       <TrashModal />
       <HistoryModal />
+      <InstallHint />
     </div>
   );
 }

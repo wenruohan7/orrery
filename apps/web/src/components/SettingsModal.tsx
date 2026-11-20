@@ -39,6 +39,20 @@ function SyncSettings() {
   const [busy, setBusy] = useState(false);
 
   const save = async () => {
+    // An https page may not talk to an http server (except this computer); browsers block it silently.
+    const target = (() => {
+      try {
+        return new URL(url);
+      } catch {
+        return null;
+      }
+    })();
+    if (!target) return setResult('That doesn’t look like a web address. It should start with http:// or https://');
+    if (location.protocol === 'https:' && target.protocol === 'http:' && !['localhost', '127.0.0.1'].includes(target.hostname)) {
+      return setResult(
+        'This page is on https, so your browser won’t connect to an http:// server. Give the server an https address (Tailscale does this for free), or open Orrery from your server’s own address instead.',
+      );
+    }
     setBusy(true);
     setResult('');
     try {

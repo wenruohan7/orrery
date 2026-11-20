@@ -38,6 +38,21 @@ This builds the app and starts the server on port 8787. It prints the vault fold
 
 Your notes are stored in `vault/` (change it with `ORRERY_VAULT=/path/to/folder`). You can edit those files with any editor. Orrery picks up the changes on the next sync. The token is kept in `vault/.orrery/token`, or you can set it with `ORRERY_TOKEN`.
 
+### Public link (Cloudflare Pages)
+
+The app can also be hosted for free so anyone can install it from a link. Notes then stay on each person's device; sync still needs your own server with an `https://` address.
+
+In the Cloudflare dashboard: **Workers & Pages → Create → Pages → Connect to Git**, pick this repo, and use:
+
+| Setting | Value |
+| --- | --- |
+| Framework preset | None |
+| Build command | `bun install --frozen-lockfile && bun run build` |
+| Build output directory | `apps/web/dist` |
+| Environment variable | `BUN_VERSION` = `1.4.2` |
+
+Every push to `main` redeploys. On iPhone, a banner explains how to add Orrery to the home screen.
+
 ### Offline use on iPhone needs HTTPS
 
 Over plain `http://` on your LAN, iOS won't let the app cache itself for offline use. Notes you've already loaded are still saved on the phone. For full offline support and access away from home, put the server behind HTTPS. The easiest way is [Tailscale](https://tailscale.com): install it on the Linux machine and the iPhone, then run `tailscale serve --bg 8787` and use the `https://…ts.net` address it gives you.

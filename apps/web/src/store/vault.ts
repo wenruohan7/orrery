@@ -11,8 +11,22 @@ import { makeResolver } from './vaultIndex';
 
 const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 
+/**
+ * Pre-fill the sync address only when the page probably came from an Orrery server
+ * (this machine, the local network or Tailscale). A public host like pages.dev has no sync API.
+ */
+function defaultSyncUrl() {
+  if (isTauri || !/^https?:$/.test(location.protocol)) return '';
+  const host = location.hostname;
+  const local =
+    host === 'localhost' ||
+    /^(127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(host) ||
+    /\.(local|lan|home|ts\.net)$/.test(host);
+  return local ? location.origin : '';
+}
+
 export const DEFAULT_SETTINGS: Settings = {
-  syncUrl: !isTauri && /^https?:$/.test(location.protocol) ? location.origin : '',
+  syncUrl: defaultSyncUrl(),
   token: '',
   dailyFolder: 'Daily',
   dailyTemplate: 'Templates/Daily note.md',
